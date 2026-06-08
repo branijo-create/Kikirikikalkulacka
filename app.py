@@ -157,4 +157,4 @@ with col_vypocet:
                 uprazena_potreba = potreba_uprazenej_podla_zrna[zrno]
                 davky = math.ceil(round(teoreticka_vaha_zelena, 4) / KAPACITA_ZELENA_BATCH)
                 skutocna_zelena = davky * KAPACITA_ZELENA_BATCH
-                realny_vynos_uprazena = skutocna_zelena * (1 - (STANDARDNY_VYPEK / 100.
+                realny_vynos_uprazena = skutocna_zelena * (1 - (STANDARDNY_VYPEK / 100.0))
