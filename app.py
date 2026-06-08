@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import math
+import io
 
 st.set_page_config(page_title="Roastery Manager v2.8", page_icon="☕", layout="wide")
 
@@ -27,14 +28,35 @@ kavy_recepty = {
 gramaze_list = [220, 500, 1000]
 
 # --- PAMÄŤ APLIKÁCIE ---
-# Streamlit potrebuje toto, aby si pamätal objednávky po kliknutí na tlačidlo
 if 'aktualne_objednavky' not in st.session_state:
     st.session_state.aktualne_objednavky = []
 
 # --- HLAVNÉ ROZHRANIE ---
 st.title("☕ Roastery Manager v2.8")
 
-st.subheader("1. Pridanie objednávky")
+# --- IMPORT Z EXCELU ---
+st.subheader("📁 Import objednávok z Excelu")
+st.write("Excel musí obsahovať stĺpce s presnými názvami: **Odberateľ**, **Káva**, **Gramáž**, **Kusy**")
+nahraty_subor = st.file_uploader("Nahraj .xlsx súbor", type=["xlsx"])
+
+if nahraty_subor is not None:
+    try:
+        df_import = pd.read_excel(nahraty_subor)
+        if st.button("📥 Načítať dáta z tohto Excelu"):
+            for index, row in df_import.iterrows():
+                st.session_state.aktualne_objednavky.append({
+                    "Odberateľ": str(row.get("Odberateľ", "Neznámy")),
+                    "Káva": str(row.get("Káva", "")),
+                    "Gramáž": int(row.get("Gramáž", 0)),
+                    "Kusy": int(row.get("Kusy", 0))
+                })
+            st.success("Objednávky boli úspešne načítané do zoznamu nižšie!")
+    except Exception as e:
+        st.error(f"Chyba pri čítaní súboru. Uisti sa, že je to správny Excel. Detaily: {e}")
+
+st.divider()
+
+st.subheader("1. Manuálne pridanie objednávky")
 col1, col2 = st.columns(2)
 
 with col1:
@@ -55,7 +77,7 @@ if rezim == "Podľa kávy":
         if kusy_1000 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 1000, "Kusy": kusy_1000})
         st.rerun()
 
-else: # Podľa gramáže
+else:
     with col1:
         gramaz = st.selectbox("Gramáž:", gramaze_list)
     with col2:
@@ -77,7 +99,8 @@ col_zoznam, col_vypocet = st.columns([2, 3])
 with col_zoznam:
     st.subheader("Aktuálne objednávky")
     if st.session_state.aktualne_objednavky:
-        st.dataframe(pd.DataFrame(st.session_state.aktualne_objednavky), use_container_width=True, hide_index=True)
+        df_objednavky = pd.DataFrame(st.session_state.aktualne_objednavky)
+        st.dataframe(df_objednavky, use_container_width=True, hide_index=True)
         if st.button("🗑️ Vymazať zoznam (Reset)"):
             st.session_state.aktualne_objednavky = []
             st.rerun()
@@ -93,15 +116,15 @@ with col_vypocet:
             potreba_zelenej_podla_zrna = {}
             potreba_uprazenej_podla_zrna = {}
             
-            # Tvoja výpočtová logika
             for o in st.session_state.aktualne_objednavky:
                 uprazena_kg = (o["Kusy"] * o["Gramáž"] / 1000.0)
                 zelena_kg_zaklad = uprazena_kg / (1 - (STANDARDNY_VYPEK / 100.0))
-                recept = kavy_recepty[o["Káva"]]["recept"]
-                
-                for zrno, podiel in recept.items():
-                    potreba_zelenej_podla_zrna[zrno] = potreba_zelenej_podla_zrna.get(zrno, 0) + (zelena_kg_zaklad * podiel)
-                    potreba_uprazenej_podla_zrna[zrno] = potreba_uprazenej_podla_zrna.get(zrno, 0) + (uprazena_kg * podiel)
+                # Ochrana, ak sa z excelu nahrá zlá káva
+                if o["Káva"] in kavy_recepty:
+                    recept = kavy_recepty[o["Káva"]]["recept"]
+                    for zrno, podiel in recept.items():
+                        potreba_zelenej_podla_zrna[zrno] = potreba_zelenej_podla_zrna.get(zrno, 0) + (zelena_kg_zaklad * podiel)
+                        potreba_uprazenej_podla_zrna[zrno] = potreba_uprazenej_podla_zrna.get(zrno, 0) + (uprazena_kg * podiel)
 
             finalny_plan = []
             for zrno, teoreticka_vaha_zelena in potreba_zelenej_podla_zrna.items():
@@ -119,5 +142,20 @@ with col_vypocet:
                     "Zostatok (kg upraž.)": round(zostatok_uprazena, 2)
                 })
             
+            df_plan = pd.DataFrame(finalny_plan)
             st.success(f"Vypočítané pre fixnú kapacitu {KAPACITA_ZELENA_BATCH}kg zelenej kávy na dávku.")
-            st.dataframe(pd.DataFrame(finalny_plan), use_container_width=True, hide_index=True)
+            st.dataframe(df_plan, use_container_width=True, hide_index=True)
+            
+            # --- EXPORT DO EXCELU ---
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_plan.to_excel(writer, index=False, sheet_name='Plan_Prazenia')
+                df_objednavky.to_excel(writer, index=False, sheet_name='Spracovane_Objednavky')
+            
+            st.download_button(
+                label="💾 Stiahnuť plán a objednávky do Excelu",
+                data=buffer.getvalue(),
+                file_name="KIKIRIKI_plan_prazenia.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary"
+            )
