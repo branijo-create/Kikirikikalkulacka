@@ -35,7 +35,6 @@ if 'aktualne_objednavky' not in st.session_state:
 if 'form_key' not in st.session_state:
     st.session_state.form_key = 0
 
-# Trik: Zvýšením počítadla sa vygenerujú úplne nové čisté políčka
 def vynuluj_policka():
     st.session_state.form_key += 1
 
@@ -49,14 +48,10 @@ nahraty_subor = st.file_uploader("Nahraj .xlsx súbor", type=["xlsx"])
 
 if nahraty_subor is not None:
     try:
-        # Otvoríme Excel a pozrieme sa na názvy hárkov (sheets)
         xl = pd.ExcelFile(nahraty_subor)
-        
-        # Ak zistíme, že ide o náš vyexportovaný plán, načítame radšej druhý hárok s objednávkami
         if 'Spracovane_Objednavky' in xl.sheet_names:
             df_import = xl.parse('Spracovane_Objednavky')
         else:
-            # Ak je to klasický jednohárkový súbor, zoberieme proste ten prvý hárok
             df_import = xl.parse(0)
 
         if st.button("📥 Načítať dáta z tohto Excelu"):
@@ -147,16 +142,24 @@ with col_vypocet:
             potreba_zelenej_podla_zrna = {}
             potreba_uprazenej_podla_zrna = {}
             
+            # Pomocná pamäť pre výpočet miešania blendov (len na hotovú upraženú kávu)
+            potreba_skladania_blendov = {}
+            
             for o in st.session_state.aktualne_objednavky:
                 uprazena_kg = (o["Kusy"] * o["Gramáž"] / 1000.0)
                 zelena_kg_zaklad = uprazena_kg / (1 - (STANDARDNY_VYPEK / 100.0))
                 
                 if o["Káva"] in kavy_recepty:
+                    # Ak má receptúra viac ako 1 zložku, ide o blend, ktorý sa bude skladať
+                    if len(kavy_recepty[o["Káva"]]["recept"]) > 1:
+                        potreba_skladania_blendov[o["Káva"]] = potreba_skladania_blendov.get(o["Káva"], 0) + uprazena_kg
+                        
                     recept = kavy_recepty[o["Káva"]]["recept"]
                     for zrno, podiel in recept.items():
                         potreba_zelenej_podla_zrna[zrno] = potreba_zelenej_podla_zrna.get(zrno, 0) + (zelena_kg_zaklad * podiel)
                         potreba_uprazenej_podla_zrna[zrno] = potreba_uprazenej_podla_zrna.get(zrno, 0) + (uprazena_kg * podiel)
 
+            # 1. Výpočet plánu praženia (Zelené zrno)
             finalny_plan = []
             for zrno, teoreticka_vaha_zelena in potreba_zelenej_podla_zrna.items():
                 uprazena_potreba = potreba_uprazenej_podla_zrna[zrno]
@@ -181,16 +184,46 @@ with col_vypocet:
             celkovo_davok = int(df_plan["Dávky (á 5kg)"].sum())
             st.markdown(f"### 🔥 Celkový počet pražení: **{celkovo_davok} dávok**")
             
-            # --- EXPORT DO EXCELU ---
+            # 2. Výpočet plánu miešania blendov
+            finalny_plan_blendov = []
+            for meno_blendu, celkova_vaha_blendu in potreba_skladania_blendov.items():
+                recept = kavy_recepty[meno_blendu]["recept"]
+                for zrno, podiel in recept.items():
+                    vaha_zlozky_kg = celkova_vaha_blendu * podiel
+                    finalny_plan_blendov.append({
+                        "Názov blendu": meno_blendu,
+                        "Celková hmotnosť blendu (kg)": round(celkova_vaha_blendu, 2),
+                        "Kávová zložka": zrno,
+                        "Podiel v blende": f"{int(podiel * 100)}%",
+                        "Hmotnosť zložky (kg)": round(vaha_zlozky_kg, 2)
+                    })
+            
+            # Vytvorenie DataFrame pre blendy (ak žiadne nie sú, bude prázdny, ale s hlavičkami)
+            if finalny_plan_blendov:
+                df_blendov = pd.DataFrame(finalny_plan_blendov)
+            else:
+                df_blendov = pd.DataFrame(columns=["Názov blendu", "Celková hmotnosť blendu (kg)", "Kávová zložka", "Podiel v blende", "Hmotnosť zložky (kg)"])
+            
+            # Zobrazenie plánu blendov na webe
+            st.divider()
+            st.subheader("🥣 Plán miešania blendov (Receptúry po upražení)")
+            if not df_blendov.empty:
+                st.dataframe(df_blendov, use_container_width=True, hide_index=True)
+            else:
+                st.info("V aktuálnych objednávkach sa nenachádzajú žiadne zmesové kávy (blendy).")
+            
+            # --- EXPORT DO EXCELU (3 HÁRKY) ---
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 df_plan.to_excel(writer, index=False, sheet_name='Plan_Prazenia')
                 df_objednavky_export.to_excel(writer, index=False, sheet_name='Spracovane_Objednavky')
+                df_blendov.to_excel(writer, index=False, sheet_name='Plan_Blendov')
             
+            st.divider()
             st.download_button(
-                label="💾 Stiahnuť plán a objednávky do Excelu",
+                label="💾 Stiahnuť kompletný 3-hárok do Excelu",
                 data=buffer.getvalue(),
-                file_name="KIKIRIKI_plan_prazenia.xlsx",
+                file_name="KIKIRIKI_kompletny_plan.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary"
             )
