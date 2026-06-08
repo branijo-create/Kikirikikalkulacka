@@ -75,7 +75,6 @@ if rezim == "Podľa kávy":
     with col1:
         kava = st.selectbox("Káva:", list(kavy_recepty.keys()), on_change=vynuluj_policka)
     with col2:
-        # Používame form_key v identifikátore (key), aby sa zakaždým vygenerovalo čisté pole
         kusy_220 = st.number_input("220g (ks):", min_value=0, step=1, key=f"k_220_{st.session_state.form_key}")
         kusy_500 = st.number_input("500g (ks):", min_value=0, step=1, key=f"k_500_{st.session_state.form_key}")
         kusy_1000 = st.number_input("1000g (ks):", min_value=0, step=1, key=f"k_1000_{st.session_state.form_key}")
@@ -168,6 +167,10 @@ with col_vypocet:
             df_plan = pd.DataFrame(finalny_plan)
             st.success(f"Vypočítané pre fixnú kapacitu {KAPACITA_ZELENA_BATCH}kg zelenej kávy na dávku.")
             st.dataframe(df_plan, use_container_width=True, hide_index=True)
+            
+            # --- CELKOVÝ SUMÁR DÁVOK ---
+            celkovo_davok = int(df_plan["Dávky (á 5kg)"].sum())
+            st.markdown(f"### 🔥 Celkový počet pražení: **{celkovo_davok} dávok**")
             
             # --- EXPORT DO EXCELU ---
             buffer = io.BytesIO()
