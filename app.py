@@ -97,11 +97,24 @@ st.divider()
 col_zoznam, col_vypocet = st.columns([2, 3])
 
 with col_zoznam:
-    st.subheader("Aktuálne objednávky")
+    st.subheader("🛒 Aktuálne objednávky")
+    st.write("*(Dvojklikom prepíšeš údaje. Pre vymazanie označ riadok vľavo a stlač Delete)*")
+    
     if st.session_state.aktualne_objednavky:
-        df_objednavky = pd.DataFrame(st.session_state.aktualne_objednavky)
-        st.dataframe(df_objednavky, use_container_width=True, hide_index=True)
-        if st.button("🗑️ Vymazať zoznam (Reset)"):
+        df_objednavky_vstup = pd.DataFrame(st.session_state.aktualne_objednavky)
+        
+        # Interaktívna tabuľka (umožňuje úpravy a mazanie riadkov)
+        upravene_df = st.data_editor(
+            df_objednavky_vstup, 
+            use_container_width=True, 
+            num_rows="dynamic",
+            hide_index=False
+        )
+        
+        # Uloženie akýchkoľvek zmien z tabuľky naspäť do pamäte
+        st.session_state.aktualne_objednavky = upravene_df.to_dict('records')
+        
+        if st.button("🗑️ Vymazať úplne všetko"):
             st.session_state.aktualne_objednavky = []
             st.rerun()
     else:
@@ -113,13 +126,14 @@ with col_vypocet:
         if not st.session_state.aktualne_objednavky:
             st.warning("Prázdne! Najprv pridaj nejaké objednávky.")
         else:
+            df_objednavky_export = pd.DataFrame(st.session_state.aktualne_objednavky)
             potreba_zelenej_podla_zrna = {}
             potreba_uprazenej_podla_zrna = {}
             
             for o in st.session_state.aktualne_objednavky:
                 uprazena_kg = (o["Kusy"] * o["Gramáž"] / 1000.0)
                 zelena_kg_zaklad = uprazena_kg / (1 - (STANDARDNY_VYPEK / 100.0))
-                # Ochrana, ak sa z excelu nahrá zlá káva
+                
                 if o["Káva"] in kavy_recepty:
                     recept = kavy_recepty[o["Káva"]]["recept"]
                     for zrno, podiel in recept.items():
@@ -150,7 +164,7 @@ with col_vypocet:
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 df_plan.to_excel(writer, index=False, sheet_name='Plan_Prazenia')
-                df_objednavky.to_excel(writer, index=False, sheet_name='Spracovane_Objednavky')
+                df_objednavky_export.to_excel(writer, index=False, sheet_name='Spracovane_Objednavky')
             
             st.download_button(
                 label="💾 Stiahnuť plán a objednávky do Excelu",
