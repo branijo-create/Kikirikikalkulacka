@@ -31,14 +31,13 @@ gramaze_list = [220, 500, 1000]
 if 'aktualne_objednavky' not in st.session_state:
     st.session_state.aktualne_objednavky = []
 
-# FUNKCIA NA VYNULOVANIE VŠETKÝCH POLÍČOK
+# Vytvorenie počítadla pre čerstvé políčka
+if 'form_key' not in st.session_state:
+    st.session_state.form_key = 0
+
+# Trik: Zvýšením počítadla sa vygenerujú úplne nové čisté políčka
 def vynuluj_policka():
-    for g in gramaze_list:
-        if f"kusy_{g}" in st.session_state:
-            st.session_state[f"kusy_{g}"] = 0
-    for k in kavy_recepty.keys():
-        if f"kusy_{k}" in st.session_state:
-            st.session_state[f"kusy_{k}"] = 0
+    st.session_state.form_key += 1
 
 # --- HLAVNÉ ROZHRANIE ---
 st.title("☕ Roastery Manager v2.8")
@@ -70,39 +69,37 @@ col1, col2 = st.columns(2)
 
 with col1:
     meno = st.text_input("Odberateľ:", placeholder="Meno")
-    # Pri zmene režimu sa zavolá "vynuluj_policka"
     rezim = st.radio("Režim zadávania:", ["Podľa kávy", "Podľa gramáže"], horizontal=True, on_change=vynuluj_policka)
 
 if rezim == "Podľa kávy":
     with col1:
-        # Pri zmene kávy sa zavolá "vynuluj_policka"
         kava = st.selectbox("Káva:", list(kavy_recepty.keys()), on_change=vynuluj_policka)
     with col2:
-        kusy_220 = st.number_input("220g (ks):", min_value=0, step=1, key="kusy_220")
-        kusy_500 = st.number_input("500g (ks):", min_value=0, step=1, key="kusy_500")
-        kusy_1000 = st.number_input("1000g (ks):", min_value=0, step=1, key="kusy_1000")
+        # Používame form_key v identifikátore (key), aby sa zakaždým vygenerovalo čisté pole
+        kusy_220 = st.number_input("220g (ks):", min_value=0, step=1, key=f"k_220_{st.session_state.form_key}")
+        kusy_500 = st.number_input("500g (ks):", min_value=0, step=1, key=f"k_500_{st.session_state.form_key}")
+        kusy_1000 = st.number_input("1000g (ks):", min_value=0, step=1, key=f"k_1000_{st.session_state.form_key}")
 
     if st.button("➕ Pridať do zoznamu", type="secondary"):
         if kusy_220 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 220, "Kusy": kusy_220})
         if kusy_500 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 500, "Kusy": kusy_500})
         if kusy_1000 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 1000, "Kusy": kusy_1000})
-        vynuluj_policka() # Vynuluje políčka po úspešnom pridaní
+        vynuluj_policka()
         st.rerun()
 
 else:
     with col1:
-        # Pri zmene gramáže sa zavolá "vynuluj_policka"
         gramaz = st.selectbox("Gramáž:", gramaze_list, on_change=vynuluj_policka)
     with col2:
         inputs_kavy = {}
         for k in kavy_recepty.keys():
-            inputs_kavy[k] = st.number_input(f"{k} (ks):", min_value=0, step=1, key=f"kusy_{k}")
+            inputs_kavy[k] = st.number_input(f"{k} (ks):", min_value=0, step=1, key=f"k_{k}_{st.session_state.form_key}")
 
     if st.button("➕ Pridať do zoznamu", type="secondary"):
         for k, v in inputs_kavy.items():
             if v > 0:
                 st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": k, "Gramáž": gramaz, "Kusy": v})
-        vynuluj_policka() # Vynuluje políčka po úspešnom pridaní
+        vynuluj_policka()
         st.rerun()
 
 st.divider()
@@ -158,3 +155,30 @@ with col_vypocet:
                 davky = math.ceil(round(teoreticka_vaha_zelena, 4) / KAPACITA_ZELENA_BATCH)
                 skutocna_zelena = davky * KAPACITA_ZELENA_BATCH
                 realny_vynos_uprazena = skutocna_zelena * (1 - (STANDARDNY_VYPEK / 100.0))
+                zostatok_uprazena = realny_vynos_uprazena - uprazena_potreba
+
+                finalny_plan.append({
+                    "Zelené zrno": zrno,
+                    "Potrebné upražiť (kg)": round(uprazena_potreba, 2),
+                    "Dávky (á 5kg)": davky,
+                    "Navážiť zelenú (kg)": skutocna_zelena,
+                    "Zostatok (kg upraž.)": round(zostatok_uprazena, 2)
+                })
+            
+            df_plan = pd.DataFrame(finalny_plan)
+            st.success(f"Vypočítané pre fixnú kapacitu {KAPACITA_ZELENA_BATCH}kg zelenej kávy na dávku.")
+            st.dataframe(df_plan, use_container_width=True, hide_index=True)
+            
+            # --- EXPORT DO EXCELU ---
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_plan.to_excel(writer, index=False, sheet_name='Plan_Prazenia')
+                df_objednavky_export.to_excel(writer, index=False, sheet_name='Spracovane_Objednavky')
+            
+            st.download_button(
+                label="💾 Stiahnuť plán a objednávky do Excelu",
+                data=buffer.getvalue(),
+                file_name="KIKIRIKI_plan_prazenia.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary"
+            )
