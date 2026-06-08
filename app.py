@@ -49,7 +49,16 @@ nahraty_subor = st.file_uploader("Nahraj .xlsx súbor", type=["xlsx"])
 
 if nahraty_subor is not None:
     try:
-        df_import = pd.read_excel(nahraty_subor)
+        # Otvoríme Excel a pozrieme sa na názvy hárkov (sheets)
+        xl = pd.ExcelFile(nahraty_subor)
+        
+        # Ak zistíme, že ide o náš vyexportovaný plán, načítame radšej druhý hárok s objednávkami
+        if 'Spracovane_Objednavky' in xl.sheet_names:
+            df_import = xl.parse('Spracovane_Objednavky')
+        else:
+            # Ak je to klasický jednohárkový súbor, zoberieme proste ten prvý hárok
+            df_import = xl.parse(0)
+
         if st.button("📥 Načítať dáta z tohto Excelu"):
             for index, row in df_import.iterrows():
                 st.session_state.aktualne_objednavky.append({
