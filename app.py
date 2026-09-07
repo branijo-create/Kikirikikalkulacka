@@ -32,7 +32,6 @@ gramaze_list = [220, 500, 1000]
 if 'aktualne_objednavky' not in st.session_state:
     st.session_state.aktualne_objednavky = []
 
-# Vytvorenie počítadla pre čerstvé políčka
 if 'form_key' not in st.session_state:
     st.session_state.form_key = 0
 
@@ -108,7 +107,6 @@ else:
 
 st.divider()
 
-# --- ZOZNAM A VÝPOČET ---
 col_zoznam, col_vypocet = st.columns([2, 3])
 
 with col_zoznam:
@@ -142,8 +140,6 @@ with col_vypocet:
             df_objednavky_export = pd.DataFrame(st.session_state.aktualne_objednavky)
             potreba_zelenej_podla_zrna = {}
             potreba_uprazenej_podla_zrna = {}
-            
-            # Pomocná pamäť pre výpočet miešania blendov (len na hotovú upraženú kávu)
             potreba_skladania_blendov = {}
             
             for o in st.session_state.aktualne_objednavky:
@@ -151,7 +147,6 @@ with col_vypocet:
                 zelena_kg_zaklad = uprazena_kg / (1 - (STANDARDNY_VYPEK / 100.0))
                 
                 if o["Káva"] in kavy_recepty:
-                    # Ak má receptúra viac ako 1 zložku, ide o blend, ktorý sa bude skladať
                     if len(kavy_recepty[o["Káva"]]["recept"]) > 1:
                         potreba_skladania_blendov[o["Káva"]] = potreba_skladania_blendov.get(o["Káva"], 0) + uprazena_kg
                         
@@ -160,7 +155,6 @@ with col_vypocet:
                         potreba_zelenej_podla_zrna[zrno] = potreba_zelenej_podla_zrna.get(zrno, 0) + (zelena_kg_zaklad * podiel)
                         potreba_uprazenej_podla_zrna[zrno] = potreba_uprazenej_podla_zrna.get(zrno, 0) + (uprazena_kg * podiel)
 
-            # 1. Výpočet plánu praženia (Zelené zrno)
             finalny_plan = []
             for zrno, teoreticka_vaha_zelena in potreba_zelenej_podla_zrna.items():
                 uprazena_potreba = potreba_uprazenej_podla_zrna[zrno]
@@ -181,11 +175,9 @@ with col_vypocet:
             st.success(f"Vypočítané pre fixnú kapacitu {KAPACITA_ZELENA_BATCH}kg zelenej kávy na dávku.")
             st.dataframe(df_plan, use_container_width=True, hide_index=True)
             
-            # --- CELKOVÝ SUMÁR DÁVOK ---
             celkovo_davok = int(df_plan["Dávky (á 5kg)"].sum())
             st.markdown(f"### 🔥 Celkový počet pražení: **{celkovo_davok} dávok**")
             
-            # 2. Výpočet plánu miešania blendov
             finalny_plan_blendov = []
             for meno_blendu, celkova_vaha_blendu in potreba_skladania_blendov.items():
                 recept = kavy_recepty[meno_blendu]["recept"]
@@ -199,13 +191,11 @@ with col_vypocet:
                         "Hmotnosť zložky (kg)": round(vaha_zlozky_kg, 2)
                     })
             
-            # Vytvorenie DataFrame pre blendy (ak žiadne nie sú, bude prázdny, ale s hlavičkami)
             if finalny_plan_blendov:
                 df_blendov = pd.DataFrame(finalny_plan_blendov)
             else:
                 df_blendov = pd.DataFrame(columns=["Názov blendu", "Celková hmotnosť blendu (kg)", "Kávová zložka", "Podiel v blende", "Hmotnosť zložky (kg)"])
             
-            # Zobrazenie plánu blendov na webe
             st.divider()
             st.subheader("🥣 Plán miešania blendov (Receptúry po upražení)")
             if not df_blendov.empty:
@@ -213,7 +203,6 @@ with col_vypocet:
             else:
                 st.info("V aktuálnych objednávkach sa nenachádzajú žiadne zmesové kávy (blendy).")
             
-            # --- EXPORT DO EXCELU (3 HÁRKY) ---
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 df_plan.to_excel(writer, index=False, sheet_name='Plan_Prazenia')
@@ -238,40 +227,45 @@ st.subheader("Exporty pre účtovníctvo")
 
 @st.cache_data
 def nacitaj_cennik():
-    # Načíta tvoj cenník (zabezpeč si, že tento súbor je nahratý na Streamlit Cloude)
     return pd.read_excel("Kalkulacia stefi posledna prazenie 7.9.2026..xlsx", sheet_name='Cenník kávy', skiprows=4)
 
 if st.session_state.aktualne_objednavky:
     try:
         df_cennik = nacitaj_cennik()
-        
-        # Priprava dát z aktuálnych objednávok
         df_vypocet = pd.DataFrame(st.session_state.aktualne_objednavky)
         
-        # Premenovanie stĺpcov, aby sedeli s názvami v cenníku
-        df_vypocet.rename(columns={'Káva': 'Produkt', 'Kusy': 'Množstvo (ks)'}, inplace=True)
+        # PREKLADOVÝ SLOVNÍK - mapuje tvoje krátke názvy z aplikácie na presné názvy v Exceli
+        preklad_kav = {
+            "Brazília": "Brazília – Donas do Café",
+            "Etiopia Yerg.": "Etiópia – Yirgacheffe",
+            "Etiopia BG": "Etiópia – Banko Gotiti",
+            "Honduras": "Honduras – SHG EP San Andrés",
+            "Columbia": "Kolumbia – Huila condor",
+            "Indonezia": "Indinezia",  # presne takto s preklepom to máš v cenníku
+            "India": "India Plantation AA",
+            "Aranka": "Aranka",
+            "Frištuk": "Frištuk",
+            "K52%": "K52% / Cucflek",
+            "Cucflek": "K52% / Cucflek",
+            "Peru": "Peru",
+            "Rwanda": "Rwanda"
+        }
         
-        # Úprava formátu gramáže (číslo -> text, napr. 1000 -> "1 000 g") pre úspešné spárovanie s cenníkom
+        # Aplikovanie prekladu a úprava stĺpcov
+        df_vypocet['Káva'] = df_vypocet['Káva'].map(preklad_kav).fillna(df_vypocet['Káva'])
+        df_vypocet.rename(columns={'Káva': 'Produkt', 'Kusy': 'Množstvo (ks)'}, inplace=True)
         df_vypocet['Gramáž'] = df_vypocet['Gramáž'].apply(lambda x: "1 000 g" if x == 1000 else f"{x} g")
         
-        # Pripojenie cenníka k výpočtom
         df_export = pd.merge(df_vypocet, df_cennik, on=['Produkt', 'Gramáž'], how='left')
-        
-        # Ak sa káva nespáruje s cenníkom, doplníme nulu, aby výpočet nezlyhal
         df_export['Cena pre obchodníka (€)'] = df_export['Cena pre obchodníka (€)'].fillna(0)
         
-        # Výber len dôležitých stĺpcov pre účtovníčku
         df_export = df_export[['Odberateľ', 'Produkt', 'Gramáž', 'Množstvo (ks)', 'Cena pre obchodníka (€)']]
         df_export.rename(columns={'Cena pre obchodníka (€)': 'Jednotková cena (€)'}, inplace=True)
         df_export['Celková suma (€)'] = df_export['Množstvo (ks)'] * df_export['Jednotková cena (€)']
         
-        # ---------------------------------------------------------
-        # EXCEL EXPORT (pre manuálne čítanie)
-        # ---------------------------------------------------------
         excel_buffer = io.BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
             df_export.to_excel(writer, index=False, sheet_name='Prehľad pre účtovníctvo')
-            # Zlepšenie vizuálu hlavičky
             workbook = writer.book
             worksheet = writer.sheets['Prehľad pre účtovníctvo']
             header_format = workbook.add_format({'bold': True, 'bg_color': '#4F81BD', 'font_color': 'white'})
@@ -281,11 +275,8 @@ if st.session_state.aktualne_objednavky:
                 
         excel_data = excel_buffer.getvalue()
 
-        # ---------------------------------------------------------
-        # ISDOC / XML EXPORT (pre KROS Omegu)
-        # ---------------------------------------------------------
         root = ET.Element("Invoice", xmlns="http://isdoc.cz/namespace/2013")
-        ET.SubElement(root, "ID").text = "EXPORT_KIKIRIKI"  # Číslo dokladu
+        ET.SubElement(root, "ID").text = "EXPORT_KIKIRIKI"
         lines = ET.SubElement(root, "InvoiceLines")
         
         for index, row in df_export.iterrows():
@@ -297,9 +288,6 @@ if st.session_state.aktualne_objednavky:
             
         xml_data = ET.tostring(root, encoding='utf-8', xml_declaration=True)
 
-        # ---------------------------------------------------------
-        # ZOBRAZENIE TLAČIDIEL V APLIKÁCII
-        # ---------------------------------------------------------
         col1, col2 = st.columns(2)
         with col1:
             st.download_button(
