@@ -3,12 +3,14 @@ import pandas as pd
 import math
 import io
 import xml.etree.ElementTree as ET
+from datetime import datetime
 
 st.set_page_config(page_title="Roastery Manager v2.8", page_icon="☕", layout="wide")
 
 # --- KONFIGURÁCIA Z TVOJHO KÓDU ---
 KAPACITA_ZELENA_BATCH = 5.0
 STANDARDNY_VYPEK = 20
+DNESNY_DATUM = datetime.now().strftime("%d-%m-%Y")
 
 kavy_recepty = {
     "Brazília": {"vypek": STANDARDNY_VYPEK, "recept": {"Brazília Santos": 1.0}},
@@ -61,7 +63,7 @@ if nahraty_subor is not None:
                     "Káva": str(row.get("Káva", "")),
                     "Gramáž": int(row.get("Gramáž", 0)),
                     "Kusy": int(row.get("Kusy", 0)),
-                    "Zabalené (ks)": int(row.get("Kusy", 0)) # Automatické predvyplnenie balenia
+                    "Zabalené (ks)": int(row.get("Kusy", 0))
                 })
             st.success("Objednávky boli úspešne načítané do zoznamu nižšie!")
     except Exception as e:
@@ -115,7 +117,6 @@ with col_zoznam:
     st.write("*(Dvojklikom prepíšeš údaje. Pre vymazanie označ riadok vľavo a stlač Delete)*")
     
     if st.session_state.aktualne_objednavky:
-        # Pre istotu doplníme 'Zabalené (ks)' aj do starých session dát ak by chýbali
         for obj in st.session_state.aktualne_objednavky:
             if 'Zabalené (ks)' not in obj:
                 obj['Zabalené (ks)'] = obj['Kusy']
@@ -219,17 +220,17 @@ with col_vypocet:
             st.download_button(
                 label="💾 Stiahnuť kompletný 3-hárok do Excelu",
                 data=buffer.getvalue(),
-                file_name="KIKIRIKI_kompletny_plan.xlsx",
+                file_name=f"KIKIRIKI_kompletny_plan_{DNESNY_DATUM}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary"
             )
 
 
 # ---------------------------------------------------------
-# EXPORTY PRE ÚČTOVNÍCTVO A KONTROLA BALENIA
+# EXPORTY PRE EVIČKU (ÚČTOVNÍCTVO) A KONTROLA BALENIA
 # ---------------------------------------------------------
 st.markdown("---")
-st.subheader("✅ Potvrdenie balenia a Export pre účtovníctvo")
+st.subheader("✅ Potvrdenie balenia a Export pre Evičku")
 
 @st.cache_data
 def nacitaj_cennik():
@@ -237,9 +238,8 @@ def nacitaj_cennik():
 
 if st.session_state.aktualne_objednavky:
     
-    st.write("Tu si môžeš pred exportom overiť reálne zabalené kusy. Ak všetko sedí, rovno sťahuj súbory. Ak ste niečoho zabalili menej/viac, **dvojklikom prepíš číslo v stĺpci 'Zabalené (ks)'**.")
+    st.write("Tu si môžeš pred exportom overiť reálne zabalené kusy. Ak ste niečoho zabalili menej/viac, **dvojklikom prepíš číslo v stĺpci 'Zabalené (ks)'**.")
     
-    # Zobrazenie tabuľky na editáciu balenia
     df_balenie_vstup = pd.DataFrame(st.session_state.aktualne_objednavky)
     upravene_balenie_df = st.data_editor(
         df_balenie_vstup,
@@ -247,18 +247,24 @@ if st.session_state.aktualne_objednavky:
         hide_index=True,
         key="editor_balenia"
     )
-    # Uloženie prípadných zmien späť do session_state
     st.session_state.aktualne_objednavky = upravene_balenie_df.to_dict('records')
+    
+    st.write("---")
+    
+    # Roletové menu pre výber odberateľa pre export
+    zoznam_odberatelov = ["Všetci"] + sorted(list(upravene_balenie_df['Odberateľ'].unique()))
+    vybrany_odberatel = st.selectbox("Filtrovať export podľa odberateľa (pre Evičku):", zoznam_odberatelov)
     
     try:
         df_cennik = nacitaj_cennik()
         
-        # Pracujeme už výhradne s potvrdeným balením
         df_vypocet = upravene_balenie_df.copy()
-        
-        # Ak niečo označili ako 0 zabalených, vyhodíme to z exportu, nech neúčtujeme vzduch
         df_vypocet = df_vypocet[df_vypocet['Zabalené (ks)'] > 0]
         
+        # Filtrovanie len pre jedného odberateľa, ak nie je zvolené "Všetci"
+        if vybrany_odberatel != "Všetci":
+            df_vypocet = df_vypocet[df_vypocet['Odberateľ'] == vybrany_odberatel]
+            
         preklad_kav = {
             "Brazília": "Brazília – Donas do Café",
             "Etiopia Yerg.": "Etiópia – Yirgacheffe",
@@ -275,67 +281,72 @@ if st.session_state.aktualne_objednavky:
             "Rwanda": "Rwanda"
         }
         
-        df_vypocet['Káva'] = df_vypocet['Káva'].map(preklad_kav).fillna(df_vypocet['Káva'])
-        # Premenujeme 'Zabalené (ks)' na 'Množstvo (ks)' pre účely cenníka
-        df_vypocet.rename(columns={'Káva': 'Produkt', 'Zabalené (ks)': 'Množstvo (ks)'}, inplace=True)
-        df_vypocet['Gramáž'] = df_vypocet['Gramáž'].apply(lambda x: "1 000 g" if x == 1000 else f"{x} g")
-        
-        df_export = pd.merge(df_vypocet, df_cennik, on=['Produkt', 'Gramáž'], how='left')
-        
-        # Zaokrúhlenie jednotkovej ceny na 2 desatinné miesta z presného pozadia Excelu
-        df_export['Cena pre obchodníka (€)'] = df_export['Cena pre obchodníka (€)'].fillna(0).round(2)
-        
-        df_export = df_export[['Odberateľ', 'Produkt', 'Gramáž', 'Množstvo (ks)', 'Cena pre obchodníka (€)']]
-        df_export.rename(columns={'Cena pre obchodníka (€)': 'Jednotková cena (€)'}, inplace=True)
-        
-        # Výpočet a zaokrúhlenie celkovej sumy
-        df_export['Celková suma (€)'] = (df_export['Množstvo (ks)'] * df_export['Jednotková cena (€)']).round(2)
-        
-        excel_buffer = io.BytesIO()
-        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-            df_export.to_excel(writer, index=False, sheet_name='Prehľad pre účtovníctvo')
-            workbook = writer.book
-            worksheet = writer.sheets['Prehľad pre účtovníctvo']
-            header_format = workbook.add_format({'bold': True, 'bg_color': '#4F81BD', 'font_color': 'white'})
-            for col_num, value in enumerate(df_export.columns.values):
-                worksheet.write(0, col_num, value, header_format)
-                worksheet.set_column(col_num, col_num, 20)
-                
-        excel_data = excel_buffer.getvalue()
-
-        root = ET.Element("Invoice", xmlns="http://isdoc.cz/namespace/2013")
-        ET.SubElement(root, "ID").text = "EXPORT_KIKIRIKI"
-        lines = ET.SubElement(root, "InvoiceLines")
-        
-        for index, row in df_export.iterrows():
-            line = ET.SubElement(lines, "InvoiceLine")
-            ET.SubElement(line, "ItemName").text = f"{row['Produkt']} {row['Gramáž']}"
-            ET.SubElement(line, "InvoicedQuantity").text = str(row['Množstvo (ks)'])
-            ET.SubElement(line, "UnitPrice").text = str(row['Jednotková cena (€)'])
-            ET.SubElement(line, "LineExtensionAmount").text = str(row['Celková suma (€)'])
+        # Ošetrenie prípadu, ak po vyfiltrovaní nezostanú žiadne dáta (napr. mal 0 zabalených)
+        if not df_vypocet.empty:
+            df_vypocet['Káva'] = df_vypocet['Káva'].map(preklad_kav).fillna(df_vypocet['Káva'])
+            df_vypocet.rename(columns={'Káva': 'Produkt', 'Zabalené (ks)': 'Množstvo (ks)'}, inplace=True)
+            df_vypocet['Gramáž'] = df_vypocet['Gramáž'].apply(lambda x: "1 000 g" if x == 1000 else f"{x} g")
             
-        xml_data = ET.tostring(root, encoding='utf-8', xml_declaration=True)
+            df_export = pd.merge(df_vypocet, df_cennik, on=['Produkt', 'Gramáž'], how='left')
+            df_export['Cena pre obchodníka (€)'] = df_export['Cena pre obchodníka (€)'].fillna(0).round(2)
+            
+            df_export = df_export[['Odberateľ', 'Produkt', 'Gramáž', 'Množstvo (ks)', 'Cena pre obchodníka (€)']]
+            df_export.rename(columns={'Cena pre obchodníka (€)': 'Jednotková cena (€)'}, inplace=True)
+            
+            df_export['Celková suma (€)'] = (df_export['Množstvo (ks)'] * df_export['Jednotková cena (€)']).round(2)
+            
+            excel_buffer = io.BytesIO()
+            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                df_export.to_excel(writer, index=False, sheet_name='Prehľad pre Evičku')
+                workbook = writer.book
+                worksheet = writer.sheets['Prehľad pre Evičku']
+                header_format = workbook.add_format({'bold': True, 'bg_color': '#4F81BD', 'font_color': 'white'})
+                for col_num, value in enumerate(df_export.columns.values):
+                    worksheet.write(0, col_num, value, header_format)
+                    worksheet.set_column(col_num, col_num, 20)
+                    
+            excel_data = excel_buffer.getvalue()
 
-        st.write("---")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.download_button(
-                label="📊 Stiahnuť Excel (pre účtovníčku)",
-                data=excel_data,
-                file_name="Kikiriki_Prehlad_Uctovnictvo.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="btn_excel_ucto"
-            )
-        with col2:
-            st.download_button(
-                label="⚙️ Stiahnuť ISDOC (automatický import Kros)",
-                data=xml_data,
-                file_name="Kikiriki_Import_Omega.isdoc",
-                mime="application/xml",
-                key="btn_isdoc_ucto"
-            )
+            root = ET.Element("Invoice", xmlns="http://isdoc.cz/namespace/2013")
+            ET.SubElement(root, "ID").text = f"EXPORT_{DNESNY_DATUM.replace('-', '')}"
+            lines = ET.SubElement(root, "InvoiceLines")
+            
+            for index, row in df_export.iterrows():
+                line = ET.SubElement(lines, "InvoiceLine")
+                ET.SubElement(line, "ItemName").text = f"{row['Produkt']} {row['Gramáž']}"
+                ET.SubElement(line, "InvoicedQuantity").text = str(row['Množstvo (ks)'])
+                ET.SubElement(line, "UnitPrice").text = str(row['Jednotková cena (€)'])
+                ET.SubElement(line, "LineExtensionAmount").text = str(row['Celková suma (€)'])
+                
+            xml_data = ET.tostring(root, encoding='utf-8', xml_declaration=True)
+            
+            # Príprava mena odberateľa do názvu súboru (nahradenie medzier, aby bol názov čistý)
+            if vybrany_odberatel == "Všetci":
+                meno_do_suboru = "Vsetci"
+            else:
+                meno_do_suboru = vybrany_odberatel.replace(" ", "_")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    label="📊 Stiahnuť Excel pre Evičku",
+                    data=excel_data,
+                    file_name=f"Kikiriki_Prehlad_Evicka_{meno_do_suboru}_{DNESNY_DATUM}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="btn_excel_ucto"
+                )
+            with col2:
+                st.download_button(
+                    label="⚙️ Stiahnuť ISDOC pre Kros",
+                    data=xml_data,
+                    file_name=f"Kikiriki_Import_Omega_{meno_do_suboru}_{DNESNY_DATUM}.isdoc",
+                    mime="application/xml",
+                    key="btn_isdoc_ucto"
+                )
+        else:
+            st.warning("Pre tohto odberateľa nie sú zaznamenané žiadne zabalené kusy.")
 
     except Exception as e:
         st.error(f"Technická chyba pre Braňa: {e}")
 else:
-    st.info("Pridaj nejaké objednávky vyššie, aby sa ti aktivovali tlačidlá na export pre účtovníctvo.")
+    st.info("Pridaj nejaké objednávky vyššie, aby sa ti aktivovali tlačidlá na export pre Evičku.")
