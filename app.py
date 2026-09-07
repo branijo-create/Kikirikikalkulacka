@@ -257,11 +257,15 @@ if st.session_state.aktualne_objednavky:
         df_vypocet['Gramáž'] = df_vypocet['Gramáž'].apply(lambda x: "1 000 g" if x == 1000 else f"{x} g")
         
         df_export = pd.merge(df_vypocet, df_cennik, on=['Produkt', 'Gramáž'], how='left')
-        df_export['Cena pre obchodníka (€)'] = df_export['Cena pre obchodníka (€)'].fillna(0)
+        
+        # TU PRIDÁME .round(2) PRE JEDNOTKOVÚ CENU
+        df_export['Cena pre obchodníka (€)'] = df_export['Cena pre obchodníka (€)'].fillna(0).round(2)
         
         df_export = df_export[['Odberateľ', 'Produkt', 'Gramáž', 'Množstvo (ks)', 'Cena pre obchodníka (€)']]
         df_export.rename(columns={'Cena pre obchodníka (€)': 'Jednotková cena (€)'}, inplace=True)
-        df_export['Celková suma (€)'] = df_export['Množstvo (ks)'] * df_export['Jednotková cena (€)']
+        
+        # TU PRIDÁME ZAOKRÚHLENIE AJ PRE CELKOVÚ SUMU
+        df_export['Celková suma (€)'] = (df_export['Množstvo (ks)'] * df_export['Jednotková cena (€)']).round(2)
         
         excel_buffer = io.BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
