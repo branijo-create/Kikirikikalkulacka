@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import math
 import io
+import xml.etree.ElementTree as ET
 
 st.set_page_config(page_title="Roastery Manager v2.8", page_icon="☕", layout="wide")
 
@@ -229,81 +230,95 @@ with col_vypocet:
             )
 
 
-import streamlit as st
-import pandas as pd
-import xml.etree.ElementTree as ET
-import io
-
+# ---------------------------------------------------------
+# EXPORTY PRE ÚČTOVNÍCTVO
+# ---------------------------------------------------------
 st.markdown("---")
 st.subheader("Exporty pre účtovníctvo")
 
-# Predpokladám, že tvoja finálna tabuľka z kalkulačky sa volá 'df_vypocet' a má aspoň stĺpce 'Produkt', 'Gramáž' a 'Množstvo (ks)'
-# Ak sa volá inak, len si ten názov vymeň v riadkoch nižšie.
-
-# 1. Spárovanie výpočtu so skrytým cenníkom
 @st.cache_data
 def nacitaj_cennik():
     # Načíta tvoj cenník (zabezpeč si, že tento súbor je nahratý na Streamlit Cloude)
     return pd.read_excel("Kalkulacia stefi posledna prazenie 7.9.2026..xlsx", sheet_name='Cenník kávy', skiprows=4)
 
-try:
-    df_cennik = nacitaj_cennik()
-    # Pripojenie cenníka k výpočtom
-    df_export = pd.merge(df_vypocet, df_cennik, on=['Produkt', 'Gramáž'], how='left')
-    df_export = df_export[['Produkt', 'Gramáž', 'Množstvo (ks)', 'Cena pre obchodníka (€)']]
-    df_export.rename(columns={'Cena pre obchodníka (€)': 'Jednotková cena (€)'}, inplace=True)
-    df_export['Celková suma (€)'] = df_export['Množstvo (ks)'] * df_export['Jednotková cena (€)']
-    
-    # ---------------------------------------------------------
-    # EXCEL EXPORT (pre manuálne čítanie)
-    # ---------------------------------------------------------
-    excel_buffer = io.BytesIO()
-    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-        df_export.to_excel(writer, index=False, sheet_name='Prehľad pre účtovníctvo')
-        # Zlepšenie vizuálu hlavičky
-        workbook = writer.book
-        worksheet = writer.sheets['Prehľad pre účtovníctvo']
-        header_format = workbook.add_format({'bold': True, 'bg_color': '#4F81BD', 'font_color': 'white'})
-        for col_num, value in enumerate(df_export.columns.values):
-            worksheet.write(0, col_num, value, header_format)
-            worksheet.set_column(col_num, col_num, 20)
-            
-    excel_data = excel_buffer.getvalue()
-
-    # ---------------------------------------------------------
-    # ISDOC / XML EXPORT (pre KROS Omegu)
-    # ---------------------------------------------------------
-    root = ET.Element("Invoice", xmlns="http://isdoc.cz/namespace/2013")
-    ET.SubElement(root, "ID").text = "EXPORT_KIKIRIKI"  # Číslo dokladu sa neskôr dá doplniť dynamicky
-    lines = ET.SubElement(root, "InvoiceLines")
-    
-    for index, row in df_export.iterrows():
-        line = ET.SubElement(lines, "InvoiceLine")
-        ET.SubElement(line, "ItemName").text = f"{row['Produkt']} {row['Gramáž']}"
-        ET.SubElement(line, "InvoicedQuantity").text = str(row['Množstvo (ks)'])
-        ET.SubElement(line, "UnitPrice").text = str(round(row['Jednotková cena (€)'], 2))
-        ET.SubElement(line, "LineExtensionAmount").text = str(round(row['Celková suma (€)'], 2))
+if st.session_state.aktualne_objednavky:
+    try:
+        df_cennik = nacitaj_cennik()
         
-    xml_data = ET.tostring(root, encoding='utf-8', xml_declaration=True)
+        # Priprava dát z aktuálnych objednávok
+        df_vypocet = pd.DataFrame(st.session_state.aktualne_objednavky)
+        
+        # Premenovanie stĺpcov, aby sedeli s názvami v cenníku
+        df_vypocet.rename(columns={'Káva': 'Produkt', 'Kusy': 'Množstvo (ks)'}, inplace=True)
+        
+        # Úprava formátu gramáže (číslo -> text, napr. 1000 -> "1 000 g") pre úspešné spárovanie s cenníkom
+        df_vypocet['Gramáž'] = df_vypocet['Gramáž'].apply(lambda x: "1 000 g" if x == 1000 else f"{x} g")
+        
+        # Pripojenie cenníka k výpočtom
+        df_export = pd.merge(df_vypocet, df_cennik, on=['Produkt', 'Gramáž'], how='left')
+        
+        # Ak sa káva nespáruje s cenníkom, doplníme nulu, aby výpočet nezlyhal
+        df_export['Cena pre obchodníka (€)'] = df_export['Cena pre obchodníka (€)'].fillna(0)
+        
+        # Výber len dôležitých stĺpcov pre účtovníčku
+        df_export = df_export[['Odberateľ', 'Produkt', 'Gramáž', 'Množstvo (ks)', 'Cena pre obchodníka (€)']]
+        df_export.rename(columns={'Cena pre obchodníka (€)': 'Jednotková cena (€)'}, inplace=True)
+        df_export['Celková suma (€)'] = df_export['Množstvo (ks)'] * df_export['Jednotková cena (€)']
+        
+        # ---------------------------------------------------------
+        # EXCEL EXPORT (pre manuálne čítanie)
+        # ---------------------------------------------------------
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+            df_export.to_excel(writer, index=False, sheet_name='Prehľad pre účtovníctvo')
+            # Zlepšenie vizuálu hlavičky
+            workbook = writer.book
+            worksheet = writer.sheets['Prehľad pre účtovníctvo']
+            header_format = workbook.add_format({'bold': True, 'bg_color': '#4F81BD', 'font_color': 'white'})
+            for col_num, value in enumerate(df_export.columns.values):
+                worksheet.write(0, col_num, value, header_format)
+                worksheet.set_column(col_num, col_num, 20)
+                
+        excel_data = excel_buffer.getvalue()
 
-    # ---------------------------------------------------------
-    # ZOBRAZENIE TLAČIDIEL V APLIKÁCII
-    # ---------------------------------------------------------
-    col1, col2 = st.columns(2)
-    with col1:
-        st.download_button(
-            label="📊 Stiahnuť Excel (pre účtovníčku)",
-            data=excel_data,
-            file_name="Kikiriki_Prehlad_Uctovnictvo.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    with col2:
-        st.download_button(
-            label="⚙️ Stiahnuť ISDOC (automatický import Kros)",
-            data=xml_data,
-            file_name="Kikiriki_Import_Omega.isdoc",
-            mime="application/xml"
-        )
+        # ---------------------------------------------------------
+        # ISDOC / XML EXPORT (pre KROS Omegu)
+        # ---------------------------------------------------------
+        root = ET.Element("Invoice", xmlns="http://isdoc.cz/namespace/2013")
+        ET.SubElement(root, "ID").text = "EXPORT_KIKIRIKI"  # Číslo dokladu
+        lines = ET.SubElement(root, "InvoiceLines")
+        
+        for index, row in df_export.iterrows():
+            line = ET.SubElement(lines, "InvoiceLine")
+            ET.SubElement(line, "ItemName").text = f"{row['Produkt']} {row['Gramáž']}"
+            ET.SubElement(line, "InvoicedQuantity").text = str(row['Množstvo (ks)'])
+            ET.SubElement(line, "UnitPrice").text = str(round(row['Jednotková cena (€)'], 2))
+            ET.SubElement(line, "LineExtensionAmount").text = str(round(row['Celková suma (€)'], 2))
+            
+        xml_data = ET.tostring(root, encoding='utf-8', xml_declaration=True)
 
-except Exception as e:
-    st.warning("Cenník zatiaľ nie je k dispozícii alebo prebehol výpočet bez neho.")
+        # ---------------------------------------------------------
+        # ZOBRAZENIE TLAČIDIEL V APLIKÁCII
+        # ---------------------------------------------------------
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                label="📊 Stiahnuť Excel (pre účtovníčku)",
+                data=excel_data,
+                file_name="Kikiriki_Prehlad_Uctovnictvo.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="btn_excel_ucto"
+            )
+        with col2:
+            st.download_button(
+                label="⚙️ Stiahnuť ISDOC (automatický import Kros)",
+                data=xml_data,
+                file_name="Kikiriki_Import_Omega.isdoc",
+                mime="application/xml",
+                key="btn_isdoc_ucto"
+            )
+
+    except Exception as e:
+        st.error(f"Technická chyba pre Braňa: {e}")
+else:
+    st.info("Pridaj nejaké objednávky vyššie, aby sa ti aktivovali tlačidlá na export pre účtovníctvo.")
