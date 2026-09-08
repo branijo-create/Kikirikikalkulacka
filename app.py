@@ -4,6 +4,8 @@ import math
 import io
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+import json
+import os
 
 st.set_page_config(page_title="Roastery Manager v2.8", page_icon="☕", layout="wide")
 
@@ -11,6 +13,8 @@ st.set_page_config(page_title="Roastery Manager v2.8", page_icon="☕", layout="
 KAPACITA_ZELENA_BATCH = 5.0
 STANDARDNY_VYPEK = 20
 DNESNY_DATUM = datetime.now().strftime("%d-%m-%Y")
+NAZOV_ZLOZKY_DRIVE = "Evička export"
+NAZOV_TABULKY_ZALOHA = "Kikiriki_Zaloha_Balenia"
 
 kavy_recepty = {
     "Brazília": {"vypek": STANDARDNY_VYPEK, "recept": {"Brazília Santos": 1.0}},
@@ -29,6 +33,71 @@ kavy_recepty = {
 }
 
 gramaze_list = [220, 500, 1000]
+
+# --- GOOGLE API FUNKCIE ---
+@st.cache_resource
+def get_google_credentials():
+    from google.oauth2.service_account import Credentials
+    creds_data = st.secrets["google_credentials_json"]
+    if isinstance(creds_data, str):
+        creds_dict = json.loads(creds_data)
+    else:
+        creds_dict = dict(creds_data)
+    
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    return Credentials.from_service_account_info(creds_dict, scopes=scopes)
+
+def uloz_do_google_sheets(data):
+    try:
+        import gspread
+        creds = get_google_credentials()
+        client = gspread.authorize(creds)
+        sheet = client.open(NAZOV_TABULKY_ZALOHA).sheet1
+        sheet.update_acell('A1', json.dumps(data, ensure_ascii=False))
+        return True
+    except Exception as e:
+        st.error(f"Nepodarilo sa uložiť na Google Drive (Tabuľka: {NAZOV_TABULKY_ZALOHA}). Skontroluj zdieľanie a práva Editora. Detail: {e}")
+        return False
+
+def nacitaj_z_google_sheets():
+    try:
+        import gspread
+        creds = get_google_credentials()
+        client = gspread.authorize(creds)
+        sheet = client.open(NAZOV_TABULKY_ZALOHA).sheet1
+        val = sheet.acell('A1').value
+        if val:
+            return json.loads(val)
+        return None
+    except Exception as e:
+        return None
+
+def nahraj_na_google_drive(file_bytes, filename, mime_type):
+    try:
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaIoBaseUpload
+        creds = get_google_credentials()
+        drive_service = build('drive', 'v3', credentials=creds)
+        
+        query = f"mimeType='application/vnd.google-apps.folder' and name='{NAZOV_ZLOZKY_DRIVE}' and trashed=false"
+        results = drive_service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+        items = results.get('files', [])
+        
+        if not items:
+            st.error(f"Zložka '{NAZOV_ZLOZKY_DRIVE}' sa nenašla! Má robot práva Editora?")
+            return False
+            
+        folder_id = items[0]['id']
+        file_metadata = {'name': filename, 'parents': [folder_id]}
+        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
+        drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+        return True
+    except Exception as e:
+        st.error(f"Chyba pri nahrávaní súboru {filename}: {e}")
+        return False
 
 # --- PAMÄŤ APLIKÁCIE ---
 if 'aktualne_objednavky' not in st.session_state:
@@ -64,7 +133,7 @@ if nahraty_subor is not None:
                     "Gramáž": int(row.get("Gramáž", 0)),
                     "Kusy": int(row.get("Kusy", 0)),
                     "Zabalené (ks)": int(row.get("Kusy", 0)),
-                    "Potvrdene": False # Prednastavíme nepotvrdený stav
+                    "Potvrdene": False
                 })
             st.success("Objednávky boli úspešne načítané do zoznamu nižšie!")
     except Exception as e:
@@ -243,6 +312,17 @@ if st.session_state.aktualne_objednavky:
 
     st.markdown("### 📱 Mobilná kontrola balenia")
     
+    col_obnova, col_medzera = st.columns([1, 2])
+    with col_obnova:
+        if st.button("🔄 Načítať z Google zálohy", type="secondary"):
+            zaloha = nacitaj_z_google_sheets()
+            if zaloha:
+                st.session_state.aktualne_objednavky = zaloha
+                st.success("Dáta z mobilu úspešne načítané!")
+                st.rerun()
+            else:
+                st.warning("Záloha na Google Drive je prázdna alebo sa k nej nedá pripojiť.")
+    
     zoznam_na_balenie = ["Všetci"] + sorted(list(set([o['Odberateľ'] for o in st.session_state.aktualne_objednavky])))
     filter_balenie = st.selectbox("Vyber si, koho ideš práve baliť (filter):", zoznam_na_balenie)
     
@@ -257,7 +337,6 @@ if st.session_state.aktualne_objednavky:
                 objednane = int(obj['Kusy'])
                 potvrdene = obj.get('Potvrdene', False)
                 
-                # Zobrazenie hlavičky v neutrálnej bielej/čiernej alebo farebne po potvrdení
                 if not potvrdene:
                     st.markdown(f"#### 📦 **{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)")
                 elif aktualne_zabalene == objednane:
@@ -267,16 +346,7 @@ if st.session_state.aktualne_objednavky:
                     
                 st.write(f"*Objednané:* **{objednane} ks**")
                 
-                # Úprava počtu
-                novy_pocet = st.number_input(
-                    "Skutočne zabalené:", 
-                    min_value=0, 
-                    value=aktualne_zabalene, 
-                    step=1, 
-                    key=f"mob_balenie_{i}"
-                )
-                
-                # Checkbox na mechanické potvrdenie
+                novy_pocet = st.number_input("Skutočne zabalené:", min_value=0, value=aktualne_zabalene, step=1, key=f"mob_balenie_{i}")
                 potvrdene_nove = st.checkbox("Potvrdiť balenie", value=potvrdene, key=f"chk_potvrd_{i}")
                 
                 upraveny_obj = obj.copy()
@@ -289,20 +359,22 @@ if st.session_state.aktualne_objednavky:
 
     st.session_state.aktualne_objednavky = upravene_objednavky
     upravene_balenie_df = pd.DataFrame(st.session_state.aktualne_objednavky)
+
+    if st.button("💾 Uložiť priebežne na Google (počas balenia)", type="primary", use_container_width=True):
+        if uloz_do_google_sheets(st.session_state.aktualne_objednavky):
+            st.toast("Progres bol bezpečne uložený do Google Tabuľky!", icon="✅")
     
     st.write("---")
-    
     st.markdown("### 📤 Finálny Export pre účtovníctvo")
     zoznam_odberatelov_export = ["Všetci"] + sorted(list(upravene_balenie_df['Odberateľ'].unique()))
     vybrany_odberatel = st.selectbox("Filtrovať export do Omegy (pre Evičku):", zoznam_odberatelov_export)
     
     try:
         df_cennik = nacitaj_cennik()
-        
         df_vypocet = upravene_balenie_df.copy()
         
         # Do exportu idú len položky, kde sa reálne balilo viac ako 0 kusov a sú zaškrtnuté/potvrdené
-        df_vypocet = df_vypocet[df_vypocet['Zabalené (ks)'] > 0]
+        df_vypocet = df_vypocet[(df_vypocet['Zabalené (ks)'] > 0) & (df_vypocet['Potvrdene'] == True)]
         
         if vybrany_odberatel != "Všetci":
             df_vypocet = df_vypocet[df_vypocet['Odberateľ'] == vybrany_odberatel]
@@ -357,9 +429,7 @@ if st.session_state.aktualne_objednavky:
             
             df_export['Celková suma (€)'] = (df_export['Množstvo (ks)'] * df_export['Jednotková cena (€)']).round(2)
             
-            # ---------------------------------------------------------
-            # EXCEL EXPORT PRE EVIČKU
-            # ---------------------------------------------------------
+            # --- EXCEL ---
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
                 df_export.to_excel(writer, index=False, sheet_name='Prehľad pre Evičku')
@@ -369,81 +439,48 @@ if st.session_state.aktualne_objednavky:
                 for col_num, value in enumerate(df_export.columns.values):
                     worksheet.write(0, col_num, value, header_format)
                     worksheet.set_column(col_num, col_num, 20)
-                    
             excel_data = excel_buffer.getvalue()
 
-            # ---------------------------------------------------------
-            # TXT EXPORT PRE KROS OMEGU
-            # ---------------------------------------------------------
+            # --- TXT OMEGA ---
             lines = []
             lines.append("R00\tT01")
-            
             grouped = df_export.groupby('Odberateľ')
             invoice_counter = 1
-            
             today_str = datetime.now().strftime("%d.%m.%Y")
             due_str = (datetime.now() + timedelta(days=14)).strftime("%d.%m.%Y")
             
             for odberatel, group in grouped:
                 cislo_dokladu = f"EXP{datetime.now().strftime('%Y%m%d')}{invoice_counter:02d}"
                 suma_celkom = group['Celková suma (€)'].sum()
-                
-                r01 = [
-                    "R01",
-                    cislo_dokladu,
-                    str(odberatel),
-                    "",
-                    today_str,
-                    due_str,
-                    today_str,
-                    "0.00",
-                    f"{suma_celkom:.2f}"
-                ]
+                r01 = ["R01", cislo_dokladu, str(odberatel), "", today_str, due_str, today_str, "0.00", f"{suma_celkom:.2f}"]
                 lines.append("\t".join(r01))
                 
                 for _, row in group.iterrows():
-                    r02 = [
-                        "R02",
-                        f"{row['Produkt']} {row['Gramáž']}",
-                        str(row['Množstvo (ks)']),
-                        "ks",
-                        f"{row['Jednotková cena (€)']:.2f}",
-                        "V",
-                        "0.00",
-                        f"{row['Jednotková cena (€)']:.2f}",
-                        "0",
-                        "V"
-                    ]
+                    r02 = ["R02", f"{row['Produkt']} {row['Gramáž']}", str(row['Množstvo (ks)']), "ks", f"{row['Jednotková cena (€)']:.2f}", "V", "0.00", f"{row['Jednotková cena (€)']:.2f}", "0", "V"]
                     lines.append("\t".join(r02))
-                    
                 invoice_counter += 1
                 
             txt_data = "\n".join(lines).encode('windows-1250', errors='replace')
             
-            if vybrany_odberatel == "Všetci":
-                meno_do_suboru = "Vsetci"
-            else:
-                meno_do_suboru = vybrany_odberatel.replace(" ", "_")
+            meno_do_suboru = "Vsetci" if vybrany_odberatel == "Všetci" else vybrany_odberatel.replace(" ", "_")
+            názov_excelu = f"Kikiriki_Prehlad_Evicka_{meno_do_suboru}_{DNESNY_DATUM}.xlsx"
+            názov_txt = f"Kikiriki_Import_Omega_{meno_do_suboru}_{DNESNY_DATUM}.txt"
 
             col1, col2 = st.columns(2)
             with col1:
-                st.download_button(
-                    label="📊 Stiahnuť Excel pre Evičku",
-                    data=excel_data,
-                    file_name=f"Kikiriki_Prehlad_Evicka_{meno_do_suboru}_{DNESNY_DATUM}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="btn_excel_ucto"
-                )
+                st.download_button("📊 Stiahnuť Excel pre Evičku (lokálne)", data=excel_data, file_name=názov_excelu, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             with col2:
-                st.download_button(
-                    label="⚙️ Stiahnuť TXT pre Kros",
-                    data=txt_data,
-                    file_name=f"Kikiriki_Import_Omega_{meno_do_suboru}_{DNESNY_DATUM}.txt",
-                    mime="text/plain",
-                    key="btn_txt_ucto"
-                )
+                st.download_button("⚙️ Stiahnuť TXT pre Kros (lokálne)", data=txt_data, file_name=názov_txt, mime="text/plain")
+
+            st.write("")
+            if st.button("📤 Odoslať Evičke priamo do zložky 'Evička export' na Google Drive", type="primary", use_container_width=True):
+                with st.spinner("Nahrávam na Google Drive..."):
+                    excel_ok = nahraj_na_google_drive(excel_data, názov_excelu, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                    txt_ok = nahraj_na_google_drive(txt_data, názov_txt, 'text/plain')
+                    if excel_ok and txt_ok:
+                        st.success("✅ Obe súbory boli úspešne nahraté do zložky 'Evička export'!")
         else:
-            st.warning("Pre tohto odberateľa nie sú zaznamenané žiadne zabalené kusy.")
+            st.warning("Pre tohto odberateľa nie sú zaznamenané/potvrdené žiadne zabalené kusy.")
 
     except Exception as e:
         st.error(f"Technická chyba pre Braňa: {e}")
