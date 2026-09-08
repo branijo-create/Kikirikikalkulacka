@@ -4,6 +4,8 @@ import math
 import io
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+import json
+import os
 
 st.set_page_config(page_title="Roastery Manager v2.8", page_icon="☕", layout="wide")
 
@@ -238,46 +240,42 @@ def nacitaj_cennik():
 
 if st.session_state.aktualne_objednavky:
     
-    st.write("Tu si môžeš pred exportom overiť reálne zabalené kusy. Ak ste niečoho zabalili menej/viac, **dvojklikom prepíš číslo v stĺpci 'Zabalené (ks)'**.")
-    
-   import json
-    import os
-
-    # Názov súboru pre priebežné ukladanie na serveri
     DRAFT_FILE = "rozpracovane_balenie.json"
 
-    # Tlačidlo na načítanie nedokončenej práce (ak sa ti mobil uspal)
+    # Tlačidlo na načítanie nedokončenej práce
     if os.path.exists(DRAFT_FILE):
-        if st.button("🔄 Načítať rozpísané balenie (obnova)"):
-            with open(DRAFT_FILE, "r", encoding="utf-8") as f:
-                st.session_state.aktualne_objednavky = json.load(f)
-            st.success("Obnovené! Môžeš pokračovať v balení.")
+        if st.button("🔄 Načítať rozpísané balenie (obnova)", type="secondary"):
+            try:
+                with open(DRAFT_FILE, "r", encoding="utf-8") as f:
+                    st.session_state.aktualne_objednavky = json.load(f)
+                st.success("Obnovené! Môžeš pokračovať v balení.")
+                st.rerun()
+            except Exception as e:
+                st.error("Nepodarilo sa načítať zálohu.")
 
     st.markdown("### 📱 Mobilná kontrola balenia")
-    st.info("Ťukaj na + a - pre úpravu kusov. Keď zabalíš časť, klikni na Uložiť priebežne.")
+    st.info("Ťukaj na + a - pre úpravu kusov. Keď zabalíš časť, klikni na **Uložiť priebežne**.")
 
-    # Generovanie veľkých vertikálnych kariet pre mobil
     upravene_objednavky = []
+    
+    # Generovanie veľkých vertikálnych kariet pre mobil
     for i, obj in enumerate(st.session_state.aktualne_objednavky):
         with st.container():
             st.markdown(f"**{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)")
             
-            # Veľký input prispôsobený na palec
             novy_pocet = st.number_input(
                 "Zabalené ks:", 
                 min_value=0, 
-                value=obj.get('Zabalené (ks)', obj['Kusy']), 
+                value=int(obj.get('Zabalené (ks)', obj['Kusy'])), 
                 step=1, 
-                key=f"mob_{i}"
+                key=f"mob_balenie_{i}"
             )
             
-            # Prekopírovanie upravených dát späť do zoznamu
             upraveny_obj = obj.copy()
             upraveny_obj['Zabalené (ks)'] = novy_pocet
             upravene_objednavky.append(upraveny_obj)
-            st.markdown("---") # Oddelovač medzi kartami pre prehľadnosť
+            st.markdown("---") 
 
-    # Aktualizujeme pamäť
     st.session_state.aktualne_objednavky = upravene_objednavky
     upravene_balenie_df = pd.DataFrame(st.session_state.aktualne_objednavky)
 
@@ -296,12 +294,13 @@ if st.session_state.aktualne_objednavky:
         df_cennik = nacitaj_cennik()
         
         df_vypocet = upravene_balenie_df.copy()
+        
+        # Automatické vyradenie položiek, kde si pri balení zadal 0 ks
         df_vypocet = df_vypocet[df_vypocet['Zabalené (ks)'] > 0]
         
         if vybrany_odberatel != "Všetci":
             df_vypocet = df_vypocet[df_vypocet['Odberateľ'] == vybrany_odberatel]
             
-        # INTERNÝ SLOVNÍK: Slúži len na nájdenie ceny v Cenníku
         preklad_cennik = {
             "Brazília": "Brazília – Donas do Café",
             "Etiopia Yerg.": "Etiópia – Yirgacheffe",
@@ -318,7 +317,6 @@ if st.session_state.aktualne_objednavky:
             "Rwanda": "Rwanda"
         }
 
-        # EXTERNÝ SLOVNÍK: Slúži na krásne názvy do faktúry
         preklad_faktura = {
             "Brazília": "Brazília – Donas do Café",
             "Etiopia Yerg.": "Etiópia – Yirgacheffe",
@@ -336,20 +334,15 @@ if st.session_state.aktualne_objednavky:
         }
         
         if not df_vypocet.empty:
-            # 1. Pripravíme pomocný stĺpec na párovanie cien z Excelu
             df_vypocet['Hladat_v_cenniku'] = df_vypocet['Káva'].map(preklad_cennik).fillna(df_vypocet['Káva'])
-            
-            # 2. Pripravíme finálny stĺpec s názvom pre Evičku a Omegu
             df_vypocet['Produkt_Faktura'] = df_vypocet['Káva'].map(preklad_faktura).fillna(df_vypocet['Káva'])
             
             df_vypocet.rename(columns={'Zabalené (ks)': 'Množstvo (ks)'}, inplace=True)
             df_vypocet['Gramaz_text'] = df_vypocet['Gramáž'].apply(lambda x: "1 000 g" if x == 1000 else f"{x} g")
             
-            # 3. Spojenie dát - hľadáme cenu podľa pomocného stĺpca 'Hladat_v_cenniku'
             df_export = pd.merge(df_vypocet, df_cennik, left_on=['Hladat_v_cenniku', 'Gramaz_text'], right_on=['Produkt', 'Gramáž'], how='left')
             df_export['Cena pre obchodníka (€)'] = df_export['Cena pre obchodníka (€)'].fillna(0).round(2)
             
-            # 4. Do exportu vložíme už len krásne názvy z Produkt_Faktura a upraceme stĺpce
             df_export['Produkt'] = df_export['Produkt_Faktura']
             df_export['Gramáž'] = df_export['Gramaz_text']
             
