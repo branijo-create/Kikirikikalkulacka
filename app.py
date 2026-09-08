@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import math
 import io
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="Roastery Manager v2.8", page_icon="☕", layout="wide")
@@ -250,7 +251,6 @@ if st.session_state.aktualne_objednavky:
     
     st.write("---")
     
-    # Roletové menu pre výber odberateľa pre export
     zoznam_odberatelov = ["Všetci"] + sorted(list(upravene_balenie_df['Odberateľ'].unique()))
     vybrany_odberatel = st.selectbox("Filtrovať export podľa odberateľa (pre Evičku):", zoznam_odberatelov)
     
@@ -260,11 +260,11 @@ if st.session_state.aktualne_objednavky:
         df_vypocet = upravene_balenie_df.copy()
         df_vypocet = df_vypocet[df_vypocet['Zabalené (ks)'] > 0]
         
-        # Filtrovanie len pre jedného odberateľa, ak nie je zvolené "Všetci"
         if vybrany_odberatel != "Všetci":
             df_vypocet = df_vypocet[df_vypocet['Odberateľ'] == vybrany_odberatel]
             
-        preklad_kav = {
+        # INTERNÝ SLOVNÍK: Slúži len na nájdenie ceny v Cenníku
+        preklad_cennik = {
             "Brazília": "Brazília – Donas do Café",
             "Etiopia Yerg.": "Etiópia – Yirgacheffe",
             "Etiopia BG": "Etiópia – Banko Gotiti",
@@ -279,14 +279,41 @@ if st.session_state.aktualne_objednavky:
             "Peru": "Peru",
             "Rwanda": "Rwanda"
         }
+
+        # EXTERNÝ SLOVNÍK: Slúži na krásne názvy do faktúry
+        preklad_faktura = {
+            "Brazília": "Brazília – Donas do Café",
+            "Etiopia Yerg.": "Etiópia – Yirgacheffe",
+            "Etiopia BG": "Etiópia – Banko Gotiti",
+            "Honduras": "Honduras – SHG EP San Andrés",
+            "Columbia": "Kolumbia – Huila condor",
+            "Indonezia": "Indonézia", 
+            "India": "India Plantation AA",
+            "Aranka": "Aranka",
+            "Frištuk": "Frištuk",
+            "K52%": "Kopaničiarska 52%",
+            "Cucflek": "Cucflek",
+            "Peru": "Peru",
+            "Rwanda": "Rwanda"
+        }
         
         if not df_vypocet.empty:
-            df_vypocet['Káva'] = df_vypocet['Káva'].map(preklad_kav).fillna(df_vypocet['Káva'])
-            df_vypocet.rename(columns={'Káva': 'Produkt', 'Zabalené (ks)': 'Množstvo (ks)'}, inplace=True)
-            df_vypocet['Gramáž'] = df_vypocet['Gramáž'].apply(lambda x: "1 000 g" if x == 1000 else f"{x} g")
+            # 1. Pripravíme pomocný stĺpec na párovanie cien z Excelu
+            df_vypocet['Hladat_v_cenniku'] = df_vypocet['Káva'].map(preklad_cennik).fillna(df_vypocet['Káva'])
             
-            df_export = pd.merge(df_vypocet, df_cennik, on=['Produkt', 'Gramáž'], how='left')
+            # 2. Pripravíme finálny stĺpec s názvom pre Evičku a Omegu
+            df_vypocet['Produkt_Faktura'] = df_vypocet['Káva'].map(preklad_faktura).fillna(df_vypocet['Káva'])
+            
+            df_vypocet.rename(columns={'Zabalené (ks)': 'Množstvo (ks)'}, inplace=True)
+            df_vypocet['Gramaz_text'] = df_vypocet['Gramáž'].apply(lambda x: "1 000 g" if x == 1000 else f"{x} g")
+            
+            # 3. Spojenie dát - hľadáme cenu podľa pomocného stĺpca 'Hladat_v_cenniku'
+            df_export = pd.merge(df_vypocet, df_cennik, left_on=['Hladat_v_cenniku', 'Gramaz_text'], right_on=['Produkt', 'Gramáž'], how='left')
             df_export['Cena pre obchodníka (€)'] = df_export['Cena pre obchodníka (€)'].fillna(0).round(2)
+            
+            # 4. Do exportu vložíme už len krásne názvy z Produkt_Faktura a upraceme stĺpce
+            df_export['Produkt'] = df_export['Produkt_Faktura']
+            df_export['Gramáž'] = df_export['Gramaz_text']
             
             df_export = df_export[['Odberateľ', 'Produkt', 'Gramáž', 'Množstvo (ks)', 'Cena pre obchodníka (€)']]
             df_export.rename(columns={'Cena pre obchodníka (€)': 'Jednotková cena (€)'}, inplace=True)
@@ -312,9 +339,8 @@ if st.session_state.aktualne_objednavky:
             # TXT EXPORT PRE KROS OMEGU
             # ---------------------------------------------------------
             lines = []
-            lines.append("R00\tT01")  # T01 označuje hlavičku pre Fakturáciu
+            lines.append("R00\tT01")
             
-            # Zoskupenie faktúr podľa odberateľov (každý odberateľ dostane svoj doklad)
             grouped = df_export.groupby('Odberateľ')
             invoice_counter = 1
             
@@ -322,25 +348,22 @@ if st.session_state.aktualne_objednavky:
             due_str = (datetime.now() + timedelta(days=14)).strftime("%d.%m.%Y")
             
             for odberatel, group in grouped:
-                # Vygenerovanie provizórneho čísla faktúry (napr. EXP2026090801)
                 cislo_dokladu = f"EXP{datetime.now().strftime('%Y%m%d')}{invoice_counter:02d}"
                 suma_celkom = group['Celková suma (€)'].sum()
                 
-                # R01: Hlavička dokladu (povinné stĺpce podľa dokumentácie)
                 r01 = [
                     "R01",
                     cislo_dokladu,
                     str(odberatel),
-                    "",            # IČO
-                    today_str,     # Dátum vystavenia
-                    due_str,       # Dátum splatnosti
-                    today_str,     # DUZP (Dátum uskutočnenia zdaniteľného plnenia)
-                    "0.00",        # Základ v nižšej sadzbe
-                    f"{suma_celkom:.2f}" # Základ vo vyššej sadzbe
+                    "",
+                    today_str,
+                    due_str,
+                    today_str,
+                    "0.00",
+                    f"{suma_celkom:.2f}"
                 ]
                 lines.append("\t".join(r01))
                 
-                # R02: Položky k danému dokladu
                 for _, row in group.iterrows():
                     r02 = [
                         "R02",
@@ -348,20 +371,18 @@ if st.session_state.aktualne_objednavky:
                         str(row['Množstvo (ks)']),
                         "ks",
                         f"{row['Jednotková cena (€)']:.2f}",
-                        "V",      # Sadzba DPH (V = vyššia)
-                        "0.00",   # Skladová cena
-                        f"{row['Jednotková cena (€)']:.2f}", # Cenníková cena
-                        "0",      # Zľava
-                        "V"       # Typ položky (V = voľná položka bez prepojenia na sklad)
+                        "V",
+                        "0.00",
+                        f"{row['Jednotková cena (€)']:.2f}",
+                        "0",
+                        "V"
                     ]
                     lines.append("\t".join(r02))
                     
                 invoice_counter += 1
                 
-            # Zloženie textu a prepojenie do správneho kódovania
             txt_data = "\n".join(lines).encode('windows-1250', errors='replace')
             
-            # Príprava mena odberateľa do názvu súboru (nahradenie medzier)
             if vybrany_odberatel == "Všetci":
                 meno_do_suboru = "Vsetci"
             else:
