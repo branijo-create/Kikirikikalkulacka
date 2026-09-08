@@ -240,14 +240,52 @@ if st.session_state.aktualne_objednavky:
     
     st.write("Tu si môžeš pred exportom overiť reálne zabalené kusy. Ak ste niečoho zabalili menej/viac, **dvojklikom prepíš číslo v stĺpci 'Zabalené (ks)'**.")
     
-    df_balenie_vstup = pd.DataFrame(st.session_state.aktualne_objednavky)
-    upravene_balenie_df = st.data_editor(
-        df_balenie_vstup,
-        use_container_width=True,
-        hide_index=True,
-        key="editor_balenia"
-    )
-    st.session_state.aktualne_objednavky = upravene_balenie_df.to_dict('records')
+   import json
+    import os
+
+    # Názov súboru pre priebežné ukladanie na serveri
+    DRAFT_FILE = "rozpracovane_balenie.json"
+
+    # Tlačidlo na načítanie nedokončenej práce (ak sa ti mobil uspal)
+    if os.path.exists(DRAFT_FILE):
+        if st.button("🔄 Načítať rozpísané balenie (obnova)"):
+            with open(DRAFT_FILE, "r", encoding="utf-8") as f:
+                st.session_state.aktualne_objednavky = json.load(f)
+            st.success("Obnovené! Môžeš pokračovať v balení.")
+
+    st.markdown("### 📱 Mobilná kontrola balenia")
+    st.info("Ťukaj na + a - pre úpravu kusov. Keď zabalíš časť, klikni na Uložiť priebežne.")
+
+    # Generovanie veľkých vertikálnych kariet pre mobil
+    upravene_objednavky = []
+    for i, obj in enumerate(st.session_state.aktualne_objednavky):
+        with st.container():
+            st.markdown(f"**{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)")
+            
+            # Veľký input prispôsobený na palec
+            novy_pocet = st.number_input(
+                "Zabalené ks:", 
+                min_value=0, 
+                value=obj.get('Zabalené (ks)', obj['Kusy']), 
+                step=1, 
+                key=f"mob_{i}"
+            )
+            
+            # Prekopírovanie upravených dát späť do zoznamu
+            upraveny_obj = obj.copy()
+            upraveny_obj['Zabalené (ks)'] = novy_pocet
+            upravene_objednavky.append(upraveny_obj)
+            st.markdown("---") # Oddelovač medzi kartami pre prehľadnosť
+
+    # Aktualizujeme pamäť
+    st.session_state.aktualne_objednavky = upravene_objednavky
+    upravene_balenie_df = pd.DataFrame(st.session_state.aktualne_objednavky)
+
+    # Tlačidlo na bezpečné priebežné uloženie počas balenia
+    if st.button("💾 Uložiť priebežne (počas balenia)", type="primary", use_container_width=True):
+        with open(DRAFT_FILE, "w", encoding="utf-8") as f:
+            json.dump(st.session_state.aktualne_objednavky, f, ensure_ascii=False, indent=2)
+        st.toast("Progres bol bezpečne uložený!", icon="✅")
     
     st.write("---")
     
