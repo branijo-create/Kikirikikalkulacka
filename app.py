@@ -4,8 +4,6 @@ import math
 import io
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
-import json
-import os
 
 st.set_page_config(page_title="Roastery Manager v2.8", page_icon="☕", layout="wide")
 
@@ -242,18 +240,6 @@ def nacitaj_cennik():
     return pd.read_excel("Kalkulacia stefi posledna prazenie 7.9.2026..xlsx", sheet_name='Cenník kávy', skiprows=4)
 
 if st.session_state.aktualne_objednavky:
-    
-    DRAFT_FILE = "rozpracovane_balenie.json"
-
-    if os.path.exists(DRAFT_FILE):
-        if st.button("🔄 Načítať rozpísané balenie (obnova)", type="secondary"):
-            try:
-                with open(DRAFT_FILE, "r", encoding="utf-8") as f:
-                    st.session_state.aktualne_objednavky = json.load(f)
-                st.success("Obnovené! Môžeš pokračovať v balení.")
-                st.rerun()
-            except Exception as e:
-                st.error("Nepodarilo sa načítať zálohu.")
 
     st.markdown("### 📱 Mobilná kontrola balenia")
     
@@ -303,11 +289,6 @@ if st.session_state.aktualne_objednavky:
 
     st.session_state.aktualne_objednavky = upravene_objednavky
     upravene_balenie_df = pd.DataFrame(st.session_state.aktualne_objednavky)
-
-    if st.button("💾 Uložiť priebežne (počas balenia)", type="primary", use_container_width=True):
-        with open(DRAFT_FILE, "w", encoding="utf-8") as f:
-            json.dump(st.session_state.aktualne_objednavky, f, ensure_ascii=False, indent=2)
-        st.toast("Progres bol bezpečne uložený!", icon="✅")
     
     st.write("---")
     
@@ -320,7 +301,7 @@ if st.session_state.aktualne_objednavky:
         
         df_vypocet = upravene_balenie_df.copy()
         
-        # Do exportu idú len položky, kde sa reálne balilo viac ako 0 kusov
+        # Do exportu idú len položky, kde sa reálne balilo viac ako 0 kusov a sú zaškrtnuté/potvrdené
         df_vypocet = df_vypocet[df_vypocet['Zabalené (ks)'] > 0]
         
         if vybrany_odberatel != "Všetci":
