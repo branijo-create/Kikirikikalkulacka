@@ -2,8 +2,7 @@ import streamlit as st
 import pandas as pd
 import math
 import io
-import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timedelta
 
 st.set_page_config(page_title="Roastery Manager v2.8", page_icon="☕", layout="wide")
 
@@ -281,7 +280,6 @@ if st.session_state.aktualne_objednavky:
             "Rwanda": "Rwanda"
         }
         
-        # Ošetrenie prípadu, ak po vyfiltrovaní nezostanú žiadne dáta (napr. mal 0 zabalených)
         if not df_vypocet.empty:
             df_vypocet['Káva'] = df_vypocet['Káva'].map(preklad_kav).fillna(df_vypocet['Káva'])
             df_vypocet.rename(columns={'Káva': 'Produkt', 'Zabalené (ks)': 'Množstvo (ks)'}, inplace=True)
@@ -295,6 +293,9 @@ if st.session_state.aktualne_objednavky:
             
             df_export['Celková suma (€)'] = (df_export['Množstvo (ks)'] * df_export['Jednotková cena (€)']).round(2)
             
+            # ---------------------------------------------------------
+            # EXCEL EXPORT PRE EVIČKU
+            # ---------------------------------------------------------
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
                 df_export.to_excel(writer, index=False, sheet_name='Prehľad pre Evičku')
@@ -307,20 +308,60 @@ if st.session_state.aktualne_objednavky:
                     
             excel_data = excel_buffer.getvalue()
 
-            root = ET.Element("Invoice", xmlns="http://isdoc.cz/namespace/2013")
-            ET.SubElement(root, "ID").text = f"EXPORT_{DNESNY_DATUM.replace('-', '')}"
-            lines = ET.SubElement(root, "InvoiceLines")
+            # ---------------------------------------------------------
+            # TXT EXPORT PRE KROS OMEGU
+            # ---------------------------------------------------------
+            lines = []
+            lines.append("R00\tT01")  # T01 označuje hlavičku pre Fakturáciu
             
-            for index, row in df_export.iterrows():
-                line = ET.SubElement(lines, "InvoiceLine")
-                ET.SubElement(line, "ItemName").text = f"{row['Produkt']} {row['Gramáž']}"
-                ET.SubElement(line, "InvoicedQuantity").text = str(row['Množstvo (ks)'])
-                ET.SubElement(line, "UnitPrice").text = str(row['Jednotková cena (€)'])
-                ET.SubElement(line, "LineExtensionAmount").text = str(row['Celková suma (€)'])
+            # Zoskupenie faktúr podľa odberateľov (každý odberateľ dostane svoj doklad)
+            grouped = df_export.groupby('Odberateľ')
+            invoice_counter = 1
+            
+            today_str = datetime.now().strftime("%d.%m.%Y")
+            due_str = (datetime.now() + timedelta(days=14)).strftime("%d.%m.%Y")
+            
+            for odberatel, group in grouped:
+                # Vygenerovanie provizórneho čísla faktúry (napr. EXP2026090801)
+                cislo_dokladu = f"EXP{datetime.now().strftime('%Y%m%d')}{invoice_counter:02d}"
+                suma_celkom = group['Celková suma (€)'].sum()
                 
-            xml_data = ET.tostring(root, encoding='utf-8', xml_declaration=True)
+                # R01: Hlavička dokladu (povinné stĺpce podľa dokumentácie)
+                r01 = [
+                    "R01",
+                    cislo_dokladu,
+                    str(odberatel),
+                    "",            # IČO
+                    today_str,     # Dátum vystavenia
+                    due_str,       # Dátum splatnosti
+                    today_str,     # DUZP (Dátum uskutočnenia zdaniteľného plnenia)
+                    "0.00",        # Základ v nižšej sadzbe
+                    f"{suma_celkom:.2f}" # Základ vo vyššej sadzbe
+                ]
+                lines.append("\t".join(r01))
+                
+                # R02: Položky k danému dokladu
+                for _, row in group.iterrows():
+                    r02 = [
+                        "R02",
+                        f"{row['Produkt']} {row['Gramáž']}",
+                        str(row['Množstvo (ks)']),
+                        "ks",
+                        f"{row['Jednotková cena (€)']:.2f}",
+                        "V",      # Sadzba DPH (V = vyššia)
+                        "0.00",   # Skladová cena
+                        f"{row['Jednotková cena (€)']:.2f}", # Cenníková cena
+                        "0",      # Zľava
+                        "V"       # Typ položky (V = voľná položka bez prepojenia na sklad)
+                    ]
+                    lines.append("\t".join(r02))
+                    
+                invoice_counter += 1
+                
+            # Zloženie textu a prepojenie do správneho kódovania
+            txt_data = "\n".join(lines).encode('windows-1250', errors='replace')
             
-            # Príprava mena odberateľa do názvu súboru (nahradenie medzier, aby bol názov čistý)
+            # Príprava mena odberateľa do názvu súboru (nahradenie medzier)
             if vybrany_odberatel == "Všetci":
                 meno_do_suboru = "Vsetci"
             else:
@@ -337,11 +378,11 @@ if st.session_state.aktualne_objednavky:
                 )
             with col2:
                 st.download_button(
-                    label="⚙️ Stiahnuť ISDOC pre Kros",
-                    data=xml_data,
-                    file_name=f"Kikiriki_Import_Omega_{meno_do_suboru}_{DNESNY_DATUM}.isdoc",
-                    mime="application/xml",
-                    key="btn_isdoc_ucto"
+                    label="⚙️ Stiahnuť TXT pre Kros",
+                    data=txt_data,
+                    file_name=f"Kikiriki_Import_Omega_{meno_do_suboru}_{DNESNY_DATUM}.txt",
+                    mime="text/plain",
+                    key="btn_txt_ucto"
                 )
         else:
             st.warning("Pre tohto odberateľa nie sú zaznamenané žiadne zabalené kusy.")
