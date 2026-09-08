@@ -258,15 +258,26 @@ if st.session_state.aktualne_objednavky:
 
     upravene_objednavky = []
     
-    # Generovanie veľkých vertikálnych kariet pre mobil
+    # Generovanie veľkých vertikálnych kariet pre mobil s farebným odlíšením
     for i, obj in enumerate(st.session_state.aktualne_objednavky):
         with st.container():
-            st.markdown(f"**{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)")
+            aktualne_zabalene = int(obj.get('Zabalené (ks)', obj['Kusy']))
+            objednane = int(obj['Kusy'])
+            
+            # Farebné rozlíšenie podľa stavu balenia
+            if aktualne_zabalene == objednane:
+                st.markdown(f"#### ✅ :green[**{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)]")
+            elif aktualne_zabalene > objednane:
+                st.markdown(f"#### ⚠️ :orange[**{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)]")
+            else:
+                st.markdown(f"#### 📦 **{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)")
+                
+            st.write(f"*Objednané:* **{objednane} ks**")
             
             novy_pocet = st.number_input(
-                "Zabalené ks:", 
+                "Skutočne zabalené:", 
                 min_value=0, 
-                value=int(obj.get('Zabalené (ks)', obj['Kusy'])), 
+                value=aktualne_zabalene, 
                 step=1, 
                 key=f"mob_balenie_{i}"
             )
@@ -295,7 +306,7 @@ if st.session_state.aktualne_objednavky:
         
         df_vypocet = upravene_balenie_df.copy()
         
-        # Automatické vyradenie položiek, kde si pri balení zadal 0 ks
+        # Automatické vyradenie položiek, kde si pri balení zadal 0 ks (nevyfakturujú sa)
         df_vypocet = df_vypocet[df_vypocet['Zabalené (ks)'] > 0]
         
         if vybrany_odberatel != "Všetci":
