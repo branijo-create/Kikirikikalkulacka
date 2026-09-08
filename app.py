@@ -254,38 +254,47 @@ if st.session_state.aktualne_objednavky:
                 st.error("Nepodarilo sa načítať zálohu.")
 
     st.markdown("### 📱 Mobilná kontrola balenia")
+    
+    # Výber klienta, ktorého ideme práve baliť
+    zoznam_na_balenie = ["Všetci"] + sorted(list(set([o['Odberateľ'] for o in st.session_state.aktualne_objednavky])))
+    filter_balenie = st.selectbox("Vyber si, koho ideš práve baliť (filter):", zoznam_na_balenie)
+    
     st.info("Ťukaj na + a - pre úpravu kusov. Keď zabalíš časť, klikni na **Uložiť priebežne**.")
 
     upravene_objednavky = []
     
-    # Generovanie veľkých vertikálnych kariet pre mobil s farebným odlíšením
+    # Generovanie veľkých vertikálnych kariet pre mobil s filtrom a farbami
     for i, obj in enumerate(st.session_state.aktualne_objednavky):
-        with st.container():
-            aktualne_zabalene = int(obj.get('Zabalené (ks)', obj['Kusy']))
-            objednane = int(obj['Kusy'])
-            
-            # Farebné rozlíšenie podľa stavu balenia
-            if aktualne_zabalene == objednane:
-                st.markdown(f"#### ✅ :green[**{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)]")
-            elif aktualne_zabalene > objednane:
-                st.markdown(f"#### ⚠️ :orange[**{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)]")
-            else:
-                st.markdown(f"#### 📦 **{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)")
+        if filter_balenie == "Všetci" or obj['Odberateľ'] == filter_balenie:
+            with st.container():
+                aktualne_zabalene = int(obj.get('Zabalené (ks)', obj['Kusy']))
+                objednane = int(obj['Kusy'])
                 
-            st.write(f"*Objednané:* **{objednane} ks**")
-            
-            novy_pocet = st.number_input(
-                "Skutočne zabalené:", 
-                min_value=0, 
-                value=aktualne_zabalene, 
-                step=1, 
-                key=f"mob_balenie_{i}"
-            )
-            
-            upraveny_obj = obj.copy()
-            upraveny_obj['Zabalené (ks)'] = novy_pocet
-            upravene_objednavky.append(upraveny_obj)
-            st.markdown("---") 
+                # Farebné rozlíšenie podľa stavu balenia
+                if aktualne_zabalene == objednane:
+                    st.markdown(f"#### ✅ :green[**{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)]")
+                elif aktualne_zabalene > objednane:
+                    st.markdown(f"#### ⚠️ :orange[**{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)]")
+                else:
+                    st.markdown(f"#### 📦 **{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)")
+                    
+                st.write(f"*Objednané:* **{objednane} ks**")
+                
+                novy_pocet = st.number_input(
+                    "Skutočne zabalené:", 
+                    min_value=0, 
+                    value=aktualne_zabalene, 
+                    step=1, 
+                    key=f"mob_balenie_{i}"
+                )
+                
+                upraveny_obj = obj.copy()
+                upraveny_obj['Zabalené (ks)'] = novy_pocet
+                upravene_objednavky.append(upraveny_obj)
+                st.markdown("---") 
+        else:
+            # Ak tohto klienta práve nebalíme, musíme jeho pôvodné dáta prekopírovať, aby sa nestratili
+            upravene_objednavky.append(obj.copy())
 
     st.session_state.aktualne_objednavky = upravene_objednavky
     upravene_balenie_df = pd.DataFrame(st.session_state.aktualne_objednavky)
@@ -298,8 +307,9 @@ if st.session_state.aktualne_objednavky:
     
     st.write("---")
     
-    zoznam_odberatelov = ["Všetci"] + sorted(list(upravene_balenie_df['Odberateľ'].unique()))
-    vybrany_odberatel = st.selectbox("Filtrovať export podľa odberateľa (pre Evičku):", zoznam_odberatelov)
+    st.markdown("### 📤 Finálny Export pre účtovníctvo")
+    zoznam_odberatelov_export = ["Všetci"] + sorted(list(upravene_balenie_df['Odberateľ'].unique()))
+    vybrany_odberatel = st.selectbox("Filtrovať export do Omegy (pre Evičku):", zoznam_odberatelov_export)
     
     try:
         df_cennik = nacitaj_cennik()
