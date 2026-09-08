@@ -65,7 +65,8 @@ if nahraty_subor is not None:
                     "Káva": str(row.get("Káva", "")),
                     "Gramáž": int(row.get("Gramáž", 0)),
                     "Kusy": int(row.get("Kusy", 0)),
-                    "Zabalené (ks)": int(row.get("Kusy", 0))
+                    "Zabalené (ks)": int(row.get("Kusy", 0)),
+                    "Potvrdene": False # Prednastavíme nepotvrdený stav
                 })
             st.success("Objednávky boli úspešne načítané do zoznamu nižšie!")
     except Exception as e:
@@ -89,9 +90,9 @@ if rezim == "Podľa kávy":
         kusy_1000 = st.number_input("1000g (ks):", min_value=0, step=1, key=f"k_1000_{st.session_state.form_key}")
 
     if st.button("➕ Pridať do zoznamu", type="secondary"):
-        if kusy_220 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 220, "Kusy": kusy_220, "Zabalené (ks)": kusy_220})
-        if kusy_500 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 500, "Kusy": kusy_500, "Zabalené (ks)": kusy_500})
-        if kusy_1000 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 1000, "Kusy": kusy_1000, "Zabalené (ks)": kusy_1000})
+        if kusy_220 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 220, "Kusy": kusy_220, "Zabalené (ks)": kusy_220, "Potvrdene": False})
+        if kusy_500 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 500, "Kusy": kusy_500, "Zabalené (ks)": kusy_500, "Potvrdene": False})
+        if kusy_1000 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 1000, "Kusy": kusy_1000, "Zabalené (ks)": kusy_1000, "Potvrdene": False})
         vynuluj_policka()
         st.rerun()
 
@@ -106,7 +107,7 @@ else:
     if st.button("➕ Pridať do zoznamu", type="secondary"):
         for k, v in inputs_kavy.items():
             if v > 0:
-                st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": k, "Gramáž": gramaz, "Kusy": v, "Zabalené (ks)": v})
+                st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": k, "Gramáž": gramaz, "Kusy": v, "Zabalené (ks)": v, "Potvrdene": False})
         vynuluj_policka()
         st.rerun()
 
@@ -122,6 +123,8 @@ with col_zoznam:
         for obj in st.session_state.aktualne_objednavky:
             if 'Zabalené (ks)' not in obj:
                 obj['Zabalené (ks)'] = obj['Kusy']
+            if 'Potvrdene' not in obj:
+                obj['Potvrdene'] = False
 
         df_objednavky_vstup = pd.DataFrame(st.session_state.aktualne_objednavky)
         
@@ -242,7 +245,6 @@ if st.session_state.aktualne_objednavky:
     
     DRAFT_FILE = "rozpracovane_balenie.json"
 
-    # Tlačidlo na načítanie nedokončenej práce
     if os.path.exists(DRAFT_FILE):
         if st.button("🔄 Načítať rozpísané balenie (obnova)", type="secondary"):
             try:
@@ -255,31 +257,31 @@ if st.session_state.aktualne_objednavky:
 
     st.markdown("### 📱 Mobilná kontrola balenia")
     
-    # Výber klienta, ktorého ideme práve baliť
     zoznam_na_balenie = ["Všetci"] + sorted(list(set([o['Odberateľ'] for o in st.session_state.aktualne_objednavky])))
     filter_balenie = st.selectbox("Vyber si, koho ideš práve baliť (filter):", zoznam_na_balenie)
     
-    st.info("Ťukaj na + a - pre úpravu kusov. Keď zabalíš časť, klikni na **Uložiť priebežne**.")
+    st.info("Karta zasvieti nazeleno až vtedy, keď fyzicky skontroluješ balenie a odškrtneš ho.")
 
     upravene_objednavky = []
     
-    # Generovanie veľkých vertikálnych kariet pre mobil s filtrom a farbami
     for i, obj in enumerate(st.session_state.aktualne_objednavky):
         if filter_balenie == "Všetci" or obj['Odberateľ'] == filter_balenie:
             with st.container():
                 aktualne_zabalene = int(obj.get('Zabalené (ks)', obj['Kusy']))
                 objednane = int(obj['Kusy'])
+                potvrdene = obj.get('Potvrdene', False)
                 
-                # Farebné rozlíšenie podľa stavu balenia
-                if aktualne_zabalene == objednane:
-                    st.markdown(f"#### ✅ :green[**{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)]")
-                elif aktualne_zabalene > objednane:
-                    st.markdown(f"#### ⚠️ :orange[**{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)]")
-                else:
+                # Zobrazenie hlavičky v neutrálnej bielej/čiernej alebo farebne po potvrdení
+                if not potvrdene:
                     st.markdown(f"#### 📦 **{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)")
+                elif aktualne_zabalene == objednane:
+                    st.markdown(f"#### ✅ :green[**{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)]")
+                else:
+                    st.markdown(f"#### ⚠️ :orange[**{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g)]")
                     
                 st.write(f"*Objednané:* **{objednane} ks**")
                 
+                # Úprava počtu
                 novy_pocet = st.number_input(
                     "Skutočne zabalené:", 
                     min_value=0, 
@@ -288,18 +290,20 @@ if st.session_state.aktualne_objednavky:
                     key=f"mob_balenie_{i}"
                 )
                 
+                # Checkbox na mechanické potvrdenie
+                potvrdene_nove = st.checkbox("Potvrdiť balenie", value=potvrdene, key=f"chk_potvrd_{i}")
+                
                 upraveny_obj = obj.copy()
                 upraveny_obj['Zabalené (ks)'] = novy_pocet
+                upraveny_obj['Potvrdene'] = potvrdene_nove
                 upravene_objednavky.append(upraveny_obj)
                 st.markdown("---") 
         else:
-            # Ak tohto klienta práve nebalíme, musíme jeho pôvodné dáta prekopírovať, aby sa nestratili
             upravene_objednavky.append(obj.copy())
 
     st.session_state.aktualne_objednavky = upravene_objednavky
     upravene_balenie_df = pd.DataFrame(st.session_state.aktualne_objednavky)
 
-    # Tlačidlo na bezpečné priebežné uloženie počas balenia
     if st.button("💾 Uložiť priebežne (počas balenia)", type="primary", use_container_width=True):
         with open(DRAFT_FILE, "w", encoding="utf-8") as f:
             json.dump(st.session_state.aktualne_objednavky, f, ensure_ascii=False, indent=2)
@@ -316,7 +320,7 @@ if st.session_state.aktualne_objednavky:
         
         df_vypocet = upravene_balenie_df.copy()
         
-        # Automatické vyradenie položiek, kde si pri balení zadal 0 ks (nevyfakturujú sa)
+        # Do exportu idú len položky, kde sa reálne balilo viac ako 0 kusov
         df_vypocet = df_vypocet[df_vypocet['Zabalené (ks)'] > 0]
         
         if vybrany_odberatel != "Všetci":
