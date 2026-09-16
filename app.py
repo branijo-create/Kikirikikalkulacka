@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import json
 import os
 
-st.set_page_config(page_title="Roastery Manager v2.8", page_icon="☕", layout="wide")
+st.set_page_config(page_title="Roastery Manager v2.9", page_icon="☕", layout="wide")
 
 # --- KONFIGURÁCIA Z TVOJHO KÓDU ---
 KAPACITA_ZELENA_BATCH = 5.0
@@ -110,7 +110,7 @@ def vynuluj_policka():
     st.session_state.form_key += 1
 
 # --- HLAVNÉ ROZHRANIE ---
-st.title("☕ Roastery Manager v2.8")
+st.title("☕ Roastery Manager v2.9")
 
 # --- IMPORT Z EXCELU ---
 st.subheader("📁 Import objednávok z Excelu")
@@ -289,13 +289,30 @@ with col_vypocet:
                 df_blendov.to_excel(writer, index=False, sheet_name='Plan_Blendov')
             
             st.divider()
+            
+            # Callback pre automaticke ulozenie
+            def callback_uloz_3harok(data_bytes, f_name):
+                ok = nahraj_na_google_drive(data_bytes, f_name, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                if ok:
+                    st.session_state.upload_3harok_uspesny = True
+                else:
+                    st.session_state.upload_3harok_chyba = True
+
+            file_name_3harok = f"KIKIRIKI_kompletny_plan_{DNESNY_DATUM}.xlsx"
             st.download_button(
-                label="💾 Stiahnuť kompletný 3-hárok do Excelu",
+                label="💾 Stiahnuť 3-hárok a uložiť na Google Drive",
                 data=buffer.getvalue(),
-                file_name=f"KIKIRIKI_kompletny_plan_{DNESNY_DATUM}.xlsx",
+                file_name=file_name_3harok,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary"
+                type="primary",
+                on_click=callback_uloz_3harok,
+                args=(buffer.getvalue(), file_name_3harok)
             )
+            
+            if st.session_state.pop('upload_3harok_uspesny', False):
+                st.success("✅ Plán bol úspešne stiahnutý a zároveň zálohovaný na Google Drive do zložky 'Evička export'!")
+            if st.session_state.pop('upload_3harok_chyba', False):
+                st.error("⚠️ Stiahnutie prebehlo, ale uloženie na Google Drive zlyhalo.")
 
 
 # ---------------------------------------------------------
@@ -327,6 +344,30 @@ if st.session_state.aktualne_objednavky:
     filter_balenie = st.selectbox("Vyber si, koho ideš práve baliť (filter):", zoznam_na_balenie)
     
     st.info("Karta zasvieti nazeleno až vtedy, keď fyzicky skontroluješ balenie a odškrtneš ho.")
+
+    # ------ NOVÉ: Pridanie kávy navyše priamo v balení ------
+    with st.expander("➕ Zvýšila ti káva? Pridať položku navyše (napr. na Sklad)"):
+        col_ex1, col_ex2, col_ex3 = st.columns(3)
+        with col_ex1:
+            ex_odberatel = st.text_input("Odberateľ:", value="Sklad", key="ex_odb")
+        with col_ex2:
+            ex_kava = st.selectbox("Káva:", list(kavy_recepty.keys()), key="ex_kava")
+        with col_ex3:
+            ex_gramaz = st.selectbox("Gramáž:", gramaze_list, key="ex_gramaz")
+            ex_kusy = st.number_input("Kusy:", min_value=1, step=1, key="ex_kusy")
+        
+        if st.button("Pridať položku navyše do zoznamu", type="secondary"):
+            st.session_state.aktualne_objednavky.append({
+                "Odberateľ": ex_odberatel,
+                "Káva": ex_kava,
+                "Gramáž": ex_gramaz,
+                "Kusy": ex_kusy,
+                "Zabalené (ks)": ex_kusy, # Predvyplníme rovno ako zabalené
+                "Potvrdene": True # Rovno aj potvrdíme
+            })
+            st.success(f"Pridané {ex_kusy}ks {ex_kava} ({ex_gramaz}g) pre {ex_odberatel}.")
+            st.rerun()
+    # ---------------------------------------------------------
 
     upravene_objednavky = []
     
@@ -483,6 +524,6 @@ if st.session_state.aktualne_objednavky:
             st.warning("Pre tohto odberateľa nie sú zaznamenané/potvrdené žiadne zabalené kusy.")
 
     except Exception as e:
-        st.error(f"Technická chyba pre Braňa: {e}")
+        st.error(f"Technická chyba: {e}")
 else:
     st.info("Pridaj nejaké objednávky vyššie, aby sa ti aktivovali tlačidlá na export pre Evičku.")
