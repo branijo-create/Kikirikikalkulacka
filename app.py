@@ -493,7 +493,9 @@ if st.session_state.aktualne_objednavky:
             for odberatel, group in grouped:
                 cislo_dokladu = f"EXP{datetime.now().strftime('%Y%m%d')}{invoice_counter:02d}"
                 suma_celkom = group['Celková suma (€)'].sum()
-                r01 = ["R01", cislo_dokladu, str(odberatel), "", today_str, due_str, today_str, "0.00", f"{suma_celkom:.2f}"]
+                
+                # OPRAVA: Pridaných 8 prázdnych položiek a na koniec číslo "11"
+                r01 = ["R01", cislo_dokladu, str(odberatel), "", today_str, due_str, today_str, "0.00", f"{suma_celkom:.2f}", "", "", "", "", "", "", "", "", "11"]
                 lines.append("\t".join(r01))
                 
                 for _, row in group.iterrows():
