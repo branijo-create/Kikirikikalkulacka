@@ -2,10 +2,8 @@ import streamlit as st
 import pandas as pd
 import math
 import io
-import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 import json
-import os
 
 st.set_page_config(page_title="Roastery Manager v2.10", page_icon="☕", layout="wide")
 
@@ -13,7 +11,6 @@ st.set_page_config(page_title="Roastery Manager v2.10", page_icon="☕", layout=
 KAPACITA_ZELENA_BATCH = 5.0
 STANDARDNY_VYPEK = 20
 DNESNY_DATUM = datetime.now().strftime("%d-%m-%Y")
-NAZOV_ZLOZKY_DRIVE = "Evička export"
 NAZOV_TABULKY_ZALOHA = "Kikiriki_Zaloha_Balenia"
 
 kavy_recepty = {
@@ -86,30 +83,6 @@ def nacitaj_z_google_sheets():
     except Exception as e:
         return None, None
 
-def nahraj_na_google_drive(file_bytes, filename, mime_type):
-    try:
-        from googleapiclient.discovery import build
-        from googleapiclient.http import MediaIoBaseUpload
-        creds = get_google_credentials()
-        drive_service = build('drive', 'v3', credentials=creds)
-        
-        query = f"mimeType='application/vnd.google-apps.folder' and name='{NAZOV_ZLOZKY_DRIVE}' and trashed=false"
-        results = drive_service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
-        items = results.get('files', [])
-        
-        if not items:
-            st.error(f"Zložka '{NAZOV_ZLOZKY_DRIVE}' sa nenašla! Má robot práva Editora?")
-            return False
-            
-        folder_id = items[0]['id']
-        file_metadata = {'name': filename, 'parents': [folder_id]}
-        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
-        drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-        return True
-    except Exception as e:
-        st.error(f"Chyba pri nahrávaní súboru {filename}: {e}")
-        return False
-
 # --- PAMÄŤ APLIKÁCIE ---
 if 'aktualne_objednavky' not in st.session_state:
     st.session_state.aktualne_objednavky = []
@@ -128,7 +101,7 @@ st.subheader("☁️ Spoločná zdieľaná pamäť (Braňo / Majo / Evička)")
 col_load, col_save = st.columns(2)
 
 with col_load:
-    if st.button("🔄 Načítať spoločnú prácu z Google disku", type="primary", use_container_width=True):
+    if st.button("🔄 Načítať spoločnú prácu z Google disku", type="primary", use_container_width=True, help="Stiahne najčerstvejší stav zoznamu od teba, Maja alebo Evičky. Týmto začni každú prácu."):
         zaloha, cas_poslednej_upravy = nacitaj_z_google_sheets()
         if zaloha:
             st.session_state.aktualne_objednavky = zaloha
@@ -137,7 +110,7 @@ with col_load:
             st.warning("Záloha na Google Drive je zatiaľ prázdna.")
 
 with col_save:
-    if st.button("💾 Uložiť aktuálny zoznam pre ostatných", type="primary", use_container_width=True):
+    if st.button("💾 Uložiť aktuálny zoznam pre ostatných", type="primary", use_container_width=True, help="Prepíše centrálnu pamäť tvojím aktuálnym zoznamom. Ostatní uvidia presne to, čo ty teraz."):
         if st.session_state.aktualne_objednavky:
             if uloz_do_google_sheets(st.session_state.aktualne_objednavky):
                 st.success("✅ Tvoj aktuálny zoznam bol bezpečne uložený do spoločnej pamäte!")
@@ -159,7 +132,7 @@ if nahraty_subor is not None:
         else:
             df_import = xl.parse(0)
 
-        if st.button("📥 Načítať dáta z tohto Excelu"):
+        if st.button("📥 Načítať dáta z tohto Excelu", help="Nenačíta novú pamäť, ale iba prilepí položky z tohto Excelu na koniec tvojho existujúceho zoznamu."):
             for index, row in df_import.iterrows():
                 st.session_state.aktualne_objednavky.append({
                     "Odberateľ": str(row.get("Odberateľ", "Neznámy")),
@@ -191,7 +164,7 @@ if rezim == "Podľa kávy":
         kusy_500 = st.number_input("500g (ks):", min_value=0, step=1, key=f"k_500_{st.session_state.form_key}")
         kusy_1000 = st.number_input("1000g (ks):", min_value=0, step=1, key=f"k_1000_{st.session_state.form_key}")
 
-    if st.button("➕ Pridať do zoznamu", type="secondary"):
+    if st.button("➕ Pridať do zoznamu", type="secondary", help="Pridá túto manuálne vypísanú objednávku na koniec tabuľky nižšie."):
         if kusy_220 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 220, "Kusy": kusy_220, "Zabalené (ks)": kusy_220, "Potvrdene": False, "❌ Zmazať": False})
         if kusy_500 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 500, "Kusy": kusy_500, "Zabalené (ks)": kusy_500, "Potvrdene": False, "❌ Zmazať": False})
         if kusy_1000 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 1000, "Kusy": kusy_1000, "Zabalené (ks)": kusy_1000, "Potvrdene": False, "❌ Zmazať": False})
@@ -206,7 +179,7 @@ else:
         for k in kavy_recepty.keys():
             inputs_kavy[k] = st.number_input(f"{k} (ks):", min_value=0, step=1, key=f"k_{k}_{st.session_state.form_key}")
 
-    if st.button("➕ Pridať do zoznamu", type="secondary"):
+    if st.button("➕ Pridať do zoznamu", type="secondary", help="Pridá túto manuálne vypísanú objednávku na koniec tabuľky nižšie."):
         for k, v in inputs_kavy.items():
             if v > 0:
                 st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": k, "Gramáž": gramaz, "Kusy": v, "Zabalené (ks)": v, "Potvrdene": False, "❌ Zmazať": False})
@@ -243,11 +216,11 @@ with col_zoznam:
         
         col_del1, col_del2 = st.columns(2)
         with col_del1:
-            if st.button("🗑️ Odstrániť zaškrtnuté", type="primary"):
+            if st.button("🗑️ Odstrániť zaškrtnuté", type="primary", help="Natrvalo vymaže zo zoznamu iba tie položky, ktoré si v tabuľke označil políčkom 'Zmazať'."):
                 st.session_state.aktualne_objednavky = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
                 st.rerun()
         with col_del2:
-            if st.button("💣 Vymazať všetko"):
+            if st.button("💣 Vymazať všetko", help="Úplne vyprázdni tvoju obrazovku. Ak to po vymazaní 'Uložíš', vyprázdniš stôl aj ostatným."):
                 st.session_state.aktualne_objednavky = []
                 st.rerun()
     else:
@@ -255,11 +228,10 @@ with col_zoznam:
 
 with col_vypocet:
     st.subheader("Plán praženia")
-    if st.button("🚀 VYPOČÍTAŤ PLÁN", type="primary", use_container_width=True):
+    if st.button("🚀 VYPOČÍTAŤ PLÁN", type="primary", use_container_width=True, help="Zoberie aktuálne nezmazané položky a vypočíta potrebu zelenej kávy, počet dávok na Bescu a recepty blendov."):
         if not st.session_state.aktualne_objednavky:
             st.warning("Prázdne! Najprv pridaj nejaké objednávky.")
         else:
-            # Ignorujeme zmazané položky pri výpočte
             aktivne_objednavky = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
             df_objednavky_export = pd.DataFrame(aktivne_objednavky)
             
@@ -336,29 +308,15 @@ with col_vypocet:
             
             st.divider()
             
-            def callback_uloz_3harok(data_bytes, f_name):
-                ok = nahraj_na_google_drive(data_bytes, f_name, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-                if ok:
-                    st.session_state.upload_3harok_uspesny = True
-                else:
-                    st.session_state.upload_3harok_chyba = True
-
             file_name_3harok = f"KIKIRIKI_kompletny_plan_{DNESNY_DATUM}.xlsx"
             st.download_button(
-                label="💾 Stiahnuť 3-hárok a uložiť na Google Drive",
+                label="💾 Stiahnuť kompletný 3-hárok do Excelu (lokálne)",
                 data=buffer.getvalue(),
                 file_name=file_name_3harok,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary",
-                on_click=callback_uloz_3harok,
-                args=(buffer.getvalue(), file_name_3harok)
+                help="Stiahne ti do počítača (do zložky Stiahnuté) Excelový súbor s plánom praženia, blendmi a zoznamom. Neukladá na Google Drive."
             )
-            
-            if st.session_state.pop('upload_3harok_uspesny', False):
-                st.success("✅ Plán bol úspešne stiahnutý a zároveň zálohovaný na Google Drive do zložky 'Evička export'!")
-            if st.session_state.pop('upload_3harok_chyba', False):
-                st.error("⚠️ Stiahnutie prebehlo, ale uloženie na Google Drive zlyhalo.")
-
 
 # ---------------------------------------------------------
 # EXPORTY PRE EVIČKU (ÚČTOVNÍCTVO) A KONTROLA BALENIA
@@ -437,7 +395,7 @@ if st.session_state.aktualne_objednavky:
 
     st.session_state.aktualne_objednavky = upravene_objednavky
     
-    if st.button("💾 Uložiť priebežne na Google (počas balenia)", type="primary", use_container_width=True):
+    if st.button("💾 Uložiť priebežne na Google (počas balenia)", type="primary", use_container_width=True, help="Funguje rovnako ako tlačidlo ÚPLNE HORE. Uloží tvoj pokrok v balení pre ostatných, aby si nemusel scrolovať hore."):
         if uloz_do_google_sheets(st.session_state.aktualne_objednavky):
             st.toast("Progres bol bezpečne uložený do Google Tabuľky!", icon="✅")
     
@@ -453,7 +411,6 @@ if st.session_state.aktualne_objednavky:
             df_cennik = nacitaj_cennik()
             df_vypocet = upravene_balenie_df.copy()
             
-            # Do exportu idú len položky, kde sa reálne balilo viac ako 0 kusov a sú zaškrtnuté/potvrdené
             df_vypocet = df_vypocet[(df_vypocet['Zabalené (ks)'] > 0) & (df_vypocet['Potvrdene'] == True)]
             
             if vybrany_odberatel != "Všetci":
@@ -548,17 +505,10 @@ if st.session_state.aktualne_objednavky:
 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.download_button("📊 Stiahnuť Excel pre Evičku (lokálne)", data=excel_data, file_name=názov_excelu, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    st.download_button("📊 Stiahnuť Excel pre Evičku (lokálne)", data=excel_data, file_name=názov_excelu, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", help="Stiahne priamo do tvojho počítača Excelový prehľad s cenami pre fakturáciu.")
                 with col2:
-                    st.download_button("⚙️ Stiahnuť TXT pre Kros (lokálne)", data=txt_data, file_name=názov_txt, mime="text/plain")
+                    st.download_button("⚙️ Stiahnuť TXT pre Kros (lokálne)", data=txt_data, file_name=názov_txt, mime="text/plain", help="Stiahne priamo do tvojho počítača TXT súbor (18 stĺpcov R01/R02) pripravený na import do Omegy.")
 
-                st.write("")
-                if st.button("📤 Odoslať Evičke priamo do zložky 'Evička export' na Google Drive", type="primary", use_container_width=True):
-                    with st.spinner("Nahrávam na Google Drive..."):
-                        excel_ok = nahraj_na_google_drive(excel_data, názov_excelu, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-                        txt_ok = nahraj_na_google_drive(txt_data, názov_txt, 'text/plain')
-                        if excel_ok and txt_ok:
-                            st.success("✅ Obe súbory boli úspešne nahraté do zložky 'Evička export'!")
             else:
                 st.warning("Pre tohto odberateľa nie sú zaznamenané/potvrdené žiadne zabalené kusy.")
         except Exception as e:
