@@ -262,11 +262,14 @@ with col_zoznam:
         df_objednavky_vstup = pd.DataFrame(st.session_state.aktualne_objednavky)
         
         st.write("*(Dvojklikom prepíšeš údaje. Pre vymazanie zaškrtni box 'Zmazať' vpravo a použi tlačidlo pod tabuľkou)*")
+        
+        # OPRAVA 2: Zmenené na num_rows="fixed", aby tabuľka nepridávala prázdne riadky pri kliknutí!
         upravene_df = st.data_editor(
             df_objednavky_vstup, 
             use_container_width=True, 
-            num_rows="dynamic",
-            hide_index=False
+            num_rows="fixed", 
+            hide_index=False,
+            key="tabulka_objednavok" 
         )
         
         st.session_state.aktualne_objednavky = upravene_df.to_dict('records')
