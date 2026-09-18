@@ -56,10 +56,17 @@ def uloz_do_google_sheets(data):
         creds = get_google_credentials()
         client = gspread.authorize(creds)
         sheet = client.open(NAZOV_TABULKY_ZALOHA).sheet1
+        
+        # Uloží dáta do bunky A1
         sheet.update_acell('A1', json.dumps(data, ensure_ascii=False))
+        
+        # Uloží presný čas do bunky B1
+        cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        sheet.update_acell('B1', cas_ulozenia)
+        
         return True
     except Exception as e:
-        st.error(f"Nepodarilo sa uložiť na Google Drive (Tabuľka: {NAZOV_TABULKY_ZALOHA}). Skontroluj zdieľanie a práva Editora. Detail: {e}")
+        st.error(f"Nepodarilo sa uložiť na Google Drive. Detail: {e}")
         return False
 
 def nacitaj_z_google_sheets():
@@ -68,12 +75,16 @@ def nacitaj_z_google_sheets():
         creds = get_google_credentials()
         client = gspread.authorize(creds)
         sheet = client.open(NAZOV_TABULKY_ZALOHA).sheet1
-        val = sheet.acell('A1').value
-        if val:
-            return json.loads(val)
-        return None
+        
+        val_data = sheet.acell('A1').value
+        val_cas = sheet.acell('B1').value
+        
+        data = json.loads(val_data) if val_data else None
+        cas = val_cas if val_cas else "Neznámy čas"
+        
+        return data, cas
     except Exception as e:
-        return None
+        return None, None
 
 def nahraj_na_google_drive(file_bytes, filename, mime_type):
     try:
