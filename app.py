@@ -52,14 +52,24 @@ def uloz_do_google_sheets(data):
         import gspread
         creds = get_google_credentials()
         client = gspread.authorize(creds)
-        sheet = client.open(NAZOV_TABULKY_ZALOHA).sheet1
+        spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
         
-        # Uloží dáta do bunky A1
-        sheet.update_acell('A1', json.dumps(data, ensure_ascii=False))
-        
-        # Uloží presný čas do bunky B1
+        # 1. Klasická záloha (aktuálny živý stav)
+        sheet1 = spreadsheet.sheet1
+        sheet1.update_acell('A1', json.dumps(data, ensure_ascii=False))
         cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        sheet.update_acell('B1', cas_ulozenia)
+        sheet1.update_acell('B1', cas_ulozenia)
+        
+        # 2. Tajná čierna skrinka (Nekonečný LOG archív)
+        try:
+            log_sheet = spreadsheet.worksheet("Logy")
+        except:
+            # Ak list 'Logy' ešte neexistuje, vytvorí ho potichu sám
+            log_sheet = spreadsheet.add_worksheet(title="Logy", rows="1000", cols="2")
+            log_sheet.append_row(["Čas uloženia", "Dáta (JSON)"])
+        
+        # Pridá nový riadok na koniec archívu
+        log_sheet.append_row([cas_ulozenia, json.dumps(data, ensure_ascii=False)])
         
         return True
     except Exception as e:
@@ -116,7 +126,6 @@ if st.session_state.get('zaloha_data'):
     with st.expander("👀 Klikni sem pre zobrazenie toho, čo je aktuálne uložené na Disku"):
         df_ukazka = pd.DataFrame(st.session_state.zaloha_data)
         if not df_ukazka.empty:
-            # Zobrazíme len tie najdôležitejšie stĺpce, aby to bolo prehľadné
             st.dataframe(df_ukazka[['Odberateľ', 'Káva', 'Gramáž', 'Kusy']], use_container_width=True, hide_index=True)
 
 # --- CENTRÁLNA PAMÄŤ - NAČÍTANIE A ULOŽENIE ---
@@ -174,18 +183,24 @@ if nahraty_subor is not None:
         else:
             df_import = xl.parse(0)
 
-        if st.button("📥 Načítať dáta z tohto Excelu", help="Nenačíta novú pamäť, ale iba prilepí položky z tohto Excelu na koniec tvojho existujúceho zoznamu."):
+        if st.button("📥 Načítať dáta z tohto Excelu", help="INTELIGENTNÝ IMPORT: Ak mali položky v Exceli už niečo zabalené alebo boli potvrdené, zachovajú si svoj stav!"):
             for index, row in df_import.iterrows():
+                # Bezpečné načítanie: ak v exceli existuje info o zabalených kusoch a potvrdení, zapamätá si ho.
+                kusy_zaklad = int(row.get("Kusy", 0))
+                # Ak stĺpec "Zabalené (ks)" neexistuje, použije defaultne pôvodné kusy
+                zabalene_hist = int(row.get("Zabalené (ks)", kusy_zaklad)) 
+                potvrdene_hist = bool(row.get("Potvrdene", False))
+                
                 st.session_state.aktualne_objednavky.append({
                     "Odberateľ": str(row.get("Odberateľ", "Neznámy")),
                     "Káva": str(row.get("Káva", "")),
                     "Gramáž": int(row.get("Gramáž", 0)),
-                    "Kusy": int(row.get("Kusy", 0)),
-                    "Zabalené (ks)": int(row.get("Kusy", 0)),
-                    "Potvrdene": False,
+                    "Kusy": kusy_zaklad,
+                    "Zabalené (ks)": zabalene_hist,
+                    "Potvrdene": potvrdene_hist,
                     "❌ Zmazať": False
                 })
-            st.success("Objednávky boli úspešne načítané do zoznamu nižšie!")
+            st.success("Objednávky z Excelu boli úspešne načítané (vrátane ich stavu balenia)!")
     except Exception as e:
         st.error(f"Chyba pri čítaní súboru. Uisti sa, že je to správny Excel. Detaily: {e}")
 
