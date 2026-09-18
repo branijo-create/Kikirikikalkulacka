@@ -96,6 +96,58 @@ def vynuluj_policka():
 # --- HLAVNÉ ROZHRANIE ---
 st.title("☕ Roastery Manager v2.10")
 
+# --- HLAVNÉ ROZHRANIE ---
+st.title("☕ Roastery Manager v2.10")
+
+# --- KONTROLA STAVU PRI ŠTARTE ---
+if 'info_cloud' not in st.session_state:
+    zaloha, cas = nacitaj_z_google_sheets()
+    if not zaloha:
+        st.session_state.info_cloud = "☁️ **Stav na Google Disku:** Prázdny stôl (žiadne aktívne objednávky)."
+    else:
+        pocet = len([o for o in zaloha if not o.get('❌ Zmazať', False)])
+        st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** {pocet} aktívnych položiek | 🕒 Posledná úprava: **{cas}**"
+
+# Vykreslenie modrej informačnej bubliny hneď na vrchu
+st.info(st.session_state.info_cloud)
+
+# --- CENTRÁLNA PAMÄŤ - NAČÍTANIE A ULOŽENIE ---
+st.subheader("☁️ Spoločná zdieľaná pamäť (Braňo / Majo / Evička)")
+col_load, col_save = st.columns(2)
+
+with col_load:
+    if st.button("🔄 Načítať spoločnú prácu z Google disku", type="primary", use_container_width=True, help="Stiahne najčerstvejší stav zoznamu od teba, Maja alebo Evičky. Týmto začni každú prácu."):
+        zaloha, cas_poslednej_upravy = nacitaj_z_google_sheets()
+        if zaloha:
+            st.session_state.aktualne_objednavky = zaloha
+            pocet = len([o for o in zaloha if not o.get('❌ Zmazať', False)])
+            st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** {pocet} aktívnych položiek | 🕒 Posledná úprava: **{cas_poslednej_upravy}**"
+            st.success(f"✅ Dáta úspešne načítané!")
+            st.rerun() # Okamžite prekreslí obrazovku, aby sa aktualizovala aj modrá bublina
+        else:
+            st.session_state.info_cloud = "☁️ **Stav na Google Disku:** Prázdny stôl (žiadne aktívne objednávky)."
+            st.warning("Záloha na Google Drive je zatiaľ prázdna.")
+            st.rerun()
+
+with col_save:
+    if st.button("💾 Uložiť aktuálny zoznam pre ostatných", type="primary", use_container_width=True, help="Prepíše centrálnu pamäť tvojím aktuálnym zoznamom. Ostatní uvidia presne to, čo ty teraz."):
+        if st.session_state.aktualne_objednavky:
+            if uloz_do_google_sheets(st.session_state.aktualne_objednavky):
+                cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+                pocet = len([o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)])
+                st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** {pocet} aktívnych položiek | 🕒 Posledná úprava: **{cas_ulozenia}**"
+                st.success("✅ Tvoj aktuálny zoznam bol bezpečne uložený do spoločnej pamäte!")
+                st.rerun()
+        else:
+            # Ak ukladáš prázdny zoznam (napríklad v sobotu po vymazaní), vyčistí to aj info
+            if uloz_do_google_sheets([]):
+                cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+                st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** Prázdny stôl | 🕒 Posledná úprava: **{cas_ulozenia}**"
+                st.success("✅ Spoločná pamäť bola úspešne vymazaná (pripravené na nový týždeň).")
+                st.rerun()
+
+st.divider()
+
 # --- CENTRÁLNA PAMÄŤ - NAČÍTANIE A ULOŽENIE ---
 st.subheader("☁️ Spoločná zdieľaná pamäť (Braňo / Majo / Evička)")
 col_load, col_save = st.columns(2)
