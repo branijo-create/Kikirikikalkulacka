@@ -94,8 +94,40 @@ def nacitaj_logy_z_google_sheets():
         client = gspread.authorize(creds)
         spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
         log_sheet = spreadsheet.worksheet("Logy")
-        zaznamy = log_sheet.get_all_values()[1:] # Preskočí hlavičku
-        return list(reversed(zaznamy)) # Najnovšie dá úplne hore
+        zaznamy = log_sheet.get_all_values()[1:] 
+        return list(reversed(zaznamy)) 
+    except Exception as e:
+        return []
+
+def uloz_export_pre_evicku(odberatel, txt_obsah):
+    try:
+        import gspread
+        creds = get_google_credentials()
+        client = gspread.authorize(creds)
+        spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
+        
+        try:
+            evicka_sheet = spreadsheet.worksheet("Evicka_Logy")
+        except:
+            evicka_sheet = spreadsheet.add_worksheet(title="Evicka_Logy", rows="1000", cols="3")
+            evicka_sheet.append_row(["Čas exportu", "Odberateľ", "TXT Obsah"])
+        
+        cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        evicka_sheet.append_row([cas_ulozenia, odberatel, txt_obsah])
+        return True
+    except Exception as e:
+        st.error(f"Nepodarilo sa uložiť export pre Evičku: {e}")
+        return False
+
+def nacitaj_exporty_pre_evicku():
+    try:
+        import gspread
+        creds = get_google_credentials()
+        client = gspread.authorize(creds)
+        spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
+        evicka_sheet = spreadsheet.worksheet("Evicka_Logy")
+        zaznamy = evicka_sheet.get_all_values()[1:] 
+        return list(reversed(zaznamy))
     except Exception as e:
         return []
 
@@ -110,13 +142,14 @@ def vynuluj_policka():
     st.session_state.form_key += 1
 
 
-# --- TAJNÝ BOČNÝ PANEL (STROJ ČASU) ---
+# --- TAJNÝ BOČNÝ PANEL (HESLÁ) ---
 with st.sidebar:
     st.write("")
-    tajne_heslo = st.text_input("🔑", type="password", help="Len pre Braňa")
+    tajne_heslo = st.text_input("🔑", type="password", help="Zadaj prístupový kód")
     
+    # 1. BRAŇOV STROJ ČASU
     if tajne_heslo == "kikiriki":
-        st.warning("🛠️ **TAJNÝ SERVISNÝ REŽIM**")
+        st.warning("🛠️ **TAJNÝ SERVISNÝ REŽIM (BRAŇO)**")
         if st.button("📥 Načítať archív logov", use_container_width=True):
             st.session_state.logy_data_zoznam = nacitaj_logy_z_google_sheets()
             
@@ -140,6 +173,33 @@ with st.sidebar:
                             st.rerun()
                     except Exception as e:
                         st.error(f"Chyba pri obnove: {e}")
+
+    # 2. EVIČKIN ÚČTOVNÝ PORTÁL
+    elif tajne_heslo == "cicky":
+        st.success("👋 **VITAJ, EVIČKA (Účtovný portál)**")
+        if st.button("📥 Načítať dostupné exporty z cloudu", use_container_width=True):
+            st.session_state.evicka_exporty = nacitaj_exporty_pre_evicku()
+            
+        if st.session_state.get('evicka_exporty') is not None:
+            exporty = st.session_state.evicka_exporty
+            if not exporty:
+                st.info("Zatiaľ tu nie sú žiadne uložené exporty.")
+            else:
+                # Zobrazíme v roletke Čas a Odberateľa
+                moznosti_evicka = [f"{r[0]} | Odberateľ: {r[1]}" for r in exporty]
+                vybrany_export = st.selectbox("Vyber si export pre stiahnutie:", moznosti_evicka)
+                
+                # Nájdenie správneho textu pre zvolený export
+                vybrany_txt = next(r[2] for r in exporty if f"{r[0]} | Odberateľ: {r[1]}" == vybrany_export)
+                
+                st.download_button(
+                    label="⚙️ Stiahnuť vybraný TXT pre Kros Omegu",
+                    data=vybrany_txt.encode('windows-1250', errors='replace'),
+                    file_name=f"Kikiriki_Omega_{vybrany_export[:10].replace('.', '')}.txt",
+                    mime="text/plain",
+                    type="primary",
+                    use_container_width=True
+                )
 
 
 # --- HLAVNÉ ROZHRANIE ---
@@ -589,8 +649,9 @@ if st.session_state.aktualne_objednavky:
                         r02 = ["R02", f"{row['Produkt']} {row['Gramáž']}", str(row['Množstvo (ks)']), "ks", f"{row['Jednotková cena (€)']:.2f}", "V", "0.00", f"{row['Jednotková cena (€)']:.2f}", "0", "V"]
                         lines.append("\t".join(r02))
                     invoice_counter += 1
-                    
-                txt_data = "\n".join(lines).encode('windows-1250', errors='replace')
+                
+                raw_txt_string = "\n".join(lines)
+                txt_data = raw_txt_string.encode('windows-1250', errors='replace')
                 
                 meno_do_suboru = "Vsetci" if vybrany_odberatel == "Všetci" else vybrany_odberatel.replace(" ", "_")
                 názov_excelu = f"Kikiriki_Prehlad_Evicka_{meno_do_suboru}_{DNESNY_DATUM}.xlsx"
@@ -601,6 +662,12 @@ if st.session_state.aktualne_objednavky:
                     st.download_button("📊 Stiahnuť Excel pre Evičku (lokálne)", data=excel_data, file_name=názov_excelu, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", help="Stiahne priamo do tvojho počítača Excelový prehľad s cenami pre fakturáciu.")
                 with col2:
                     st.download_button("⚙️ Stiahnuť TXT pre Kros (lokálne)", data=txt_data, file_name=názov_txt, mime="text/plain", help="Stiahne priamo do tvojho počítača TXT súbor (18 stĺpcov R01/R02) pripravený na import do Omegy.")
+
+                st.write("")
+                # Uloženie do tajného archívu pre Evičku
+                if st.button("📥 Uložiť tento TXT export do tajného archívu pre Evičku", type="primary", use_container_width=True):
+                    if uloz_export_pre_evicku(vybrany_odberatel, raw_txt_string):
+                        st.success("✅ TXT dáta boli úspešne uložené do Evičkinho portálu! Môže si ich kedykoľvek stiahnuť v bočnom paneli (heslo cicky).")
 
             else:
                 st.warning("Pre tohto odberateľa nie sú zaznamenané/potvrdené žiadne zabalené kusy.")
