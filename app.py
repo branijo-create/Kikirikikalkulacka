@@ -184,17 +184,21 @@ col_zoznam, col_vypocet = st.columns([2, 3])
 
 with col_zoznam:
     st.subheader("🛒 Aktuálne objednávky")
-    st.write("*(Dvojklikom prepíšeš údaje. Pre vymazanie označ riadok vľavo a stlač Delete)*")
     
     if st.session_state.aktualne_objednavky:
+        # 1. Kontrola a pridanie pomocného stĺpca pre mazanie
         for obj in st.session_state.aktualne_objednavky:
             if 'Zabalené (ks)' not in obj:
                 obj['Zabalené (ks)'] = obj['Kusy']
             if 'Potvrdene' not in obj:
                 obj['Potvrdene'] = False
+            if '❌ Zmazať' not in obj:
+                obj['❌ Zmazať'] = False
 
         df_objednavky_vstup = pd.DataFrame(st.session_state.aktualne_objednavky)
         
+        # 2. Zobrazenie editovateľnej tabuľky
+        st.write("*(Dvojklikom prepíšeš údaje. Pre vymazanie zaškrtni box 'Zmazať' vpravo a použi tlačidlo pod tabuľkou)*")
         upravene_df = st.data_editor(
             df_objednavky_vstup, 
             use_container_width=True, 
@@ -202,11 +206,20 @@ with col_zoznam:
             hide_index=False
         )
         
+        # 3. Uloženie zmien do pamäte aplikácie
         st.session_state.aktualne_objednavky = upravene_df.to_dict('records')
         
-        if st.button("🗑️ Vymazať úplne všetko"):
-            st.session_state.aktualne_objednavky = []
-            st.rerun()
+        # 4. Tlačidlá na selektívne alebo úplné mazanie
+        col_del1, col_del2 = st.columns(2)
+        with col_del1:
+            if st.button("🗑️ Odstrániť zaškrtnuté položky", type="primary"):
+                # Ponechá v zozname len tie, ktoré NIE SÚ zaškrtnuté na zmazanie
+                st.session_state.aktualne_objednavky = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
+                st.rerun()
+        with col_del2:
+            if st.button("💣 Vymazať úplne všetko"):
+                st.session_state.aktualne_objednavky = []
+                st.rerun()
     else:
         st.info("Zoznam je zatiaľ prázdny.")
 
