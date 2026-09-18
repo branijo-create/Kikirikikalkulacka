@@ -101,12 +101,23 @@ if 'info_cloud' not in st.session_state:
     zaloha, cas = nacitaj_z_google_sheets()
     if not zaloha:
         st.session_state.info_cloud = "☁️ **Stav na Google Disku:** Prázdny stôl (žiadne aktívne objednávky)."
+        st.session_state.zaloha_data = []
     else:
-        pocet = len([o for o in zaloha if not o.get('❌ Zmazať', False)])
+        aktivne = [o for o in zaloha if not o.get('❌ Zmazať', False)]
+        pocet = len(aktivne)
         st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** {pocet} aktívnych položiek | 🕒 Posledná úprava: **{cas}**"
+        st.session_state.zaloha_data = aktivne
 
 # Vykreslenie modrej informačnej bubliny hneď na vrchu
 st.info(st.session_state.info_cloud)
+
+# Rozbaľovacie okienko s náhľadom
+if st.session_state.get('zaloha_data'):
+    with st.expander("👀 Klikni sem pre zobrazenie toho, čo je aktuálne uložené na Disku"):
+        df_ukazka = pd.DataFrame(st.session_state.zaloha_data)
+        if not df_ukazka.empty:
+            # Zobrazíme len tie najdôležitejšie stĺpce, aby to bolo prehľadné
+            st.dataframe(df_ukazka[['Odberateľ', 'Káva', 'Gramáž', 'Kusy']], use_container_width=True, hide_index=True)
 
 # --- CENTRÁLNA PAMÄŤ - NAČÍTANIE A ULOŽENIE ---
 st.subheader("☁️ Spoločná zdieľaná pamäť (Braňo / Majo / Evička)")
@@ -117,12 +128,15 @@ with col_load:
         zaloha, cas_poslednej_upravy = nacitaj_z_google_sheets()
         if zaloha:
             st.session_state.aktualne_objednavky = zaloha
-            pocet = len([o for o in zaloha if not o.get('❌ Zmazať', False)])
+            aktivne = [o for o in zaloha if not o.get('❌ Zmazať', False)]
+            pocet = len(aktivne)
             st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** {pocet} aktívnych položiek | 🕒 Posledná úprava: **{cas_poslednej_upravy}**"
+            st.session_state.zaloha_data = aktivne
             st.success(f"✅ Dáta úspešne načítané!")
-            st.rerun() # Okamžite prekreslí obrazovku, aby sa aktualizovala aj modrá bublina
+            st.rerun() 
         else:
             st.session_state.info_cloud = "☁️ **Stav na Google Disku:** Prázdny stôl (žiadne aktívne objednávky)."
+            st.session_state.zaloha_data = []
             st.warning("Záloha na Google Drive je zatiaľ prázdna.")
             st.rerun()
 
@@ -131,15 +145,17 @@ with col_save:
         if st.session_state.aktualne_objednavky:
             if uloz_do_google_sheets(st.session_state.aktualne_objednavky):
                 cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-                pocet = len([o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)])
+                aktivne = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
+                pocet = len(aktivne)
                 st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** {pocet} aktívnych položiek | 🕒 Posledná úprava: **{cas_ulozenia}**"
+                st.session_state.zaloha_data = aktivne
                 st.success("✅ Tvoj aktuálny zoznam bol bezpečne uložený do spoločnej pamäte!")
                 st.rerun()
         else:
-            # Ak ukladáš prázdny zoznam (napríklad v sobotu po vymazaní), vyčistí to aj info
             if uloz_do_google_sheets([]):
                 cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
                 st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** Prázdny stôl | 🕒 Posledná úprava: **{cas_ulozenia}**"
+                st.session_state.zaloha_data = []
                 st.success("✅ Spoločná pamäť bola úspešne vymazaná (pripravené na nový týždeň).")
                 st.rerun()
 
