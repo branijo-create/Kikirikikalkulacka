@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import json
 import os
 
-st.set_page_config(page_title="Roastery Manager v2.9", page_icon="☕", layout="wide")
+st.set_page_config(page_title="Roastery Manager v2.10", page_icon="☕", layout="wide")
 
 # --- KONFIGURÁCIA Z TVOJHO KÓDU ---
 KAPACITA_ZELENA_BATCH = 5.0
@@ -66,7 +66,7 @@ def uloz_do_google_sheets(data):
         
         return True
     except Exception as e:
-        st.error(f"Nepodarilo sa uložiť na Google Drive. Detail: {e}")
+        st.error(f"Nepodarilo sa uložiť na Google Drive. Skontroluj zdieľanie a práva Editora. Detail: {e}")
         return False
 
 def nacitaj_z_google_sheets():
@@ -121,18 +121,30 @@ def vynuluj_policka():
     st.session_state.form_key += 1
 
 # --- HLAVNÉ ROZHRANIE ---
-st.title("☕ Roastery Manager v2.9")
+st.title("☕ Roastery Manager v2.10")
 
-# --- CENTRÁLNA PAMÄŤ - NAČÍTANIE ---
-col_load1, col_load2 = st.columns([1, 2])
-with col_load1:
-    if st.button("🔄 Načítať spoločnú prácu z Google disku", type="primary"):
+# --- CENTRÁLNA PAMÄŤ - NAČÍTANIE A ULOŽENIE ---
+st.subheader("☁️ Spoločná zdieľaná pamäť (Braňo / Majo / Evička)")
+col_load, col_save = st.columns(2)
+
+with col_load:
+    if st.button("🔄 Načítať spoločnú prácu z Google disku", type="primary", use_container_width=True):
         zaloha, cas_poslednej_upravy = nacitaj_z_google_sheets()
         if zaloha:
             st.session_state.aktualne_objednavky = zaloha
             st.success(f"✅ Dáta úspešne načítané! (Posledná úprava: **{cas_poslednej_upravy}**)")
         else:
             st.warning("Záloha na Google Drive je zatiaľ prázdna.")
+
+with col_save:
+    if st.button("💾 Uložiť aktuálny zoznam pre ostatných", type="primary", use_container_width=True):
+        if st.session_state.aktualne_objednavky:
+            if uloz_do_google_sheets(st.session_state.aktualne_objednavky):
+                st.success("✅ Tvoj aktuálny zoznam bol bezpečne uložený do spoločnej pamäte!")
+        else:
+            st.warning("Zoznam je prázdny, nie je čo uložiť.")
+
+st.divider()
 
 # --- IMPORT Z EXCELU ---
 st.subheader("📁 Import objednávok z Excelu")
@@ -155,7 +167,8 @@ if nahraty_subor is not None:
                     "Gramáž": int(row.get("Gramáž", 0)),
                     "Kusy": int(row.get("Kusy", 0)),
                     "Zabalené (ks)": int(row.get("Kusy", 0)),
-                    "Potvrdene": False
+                    "Potvrdene": False,
+                    "❌ Zmazať": False
                 })
             st.success("Objednávky boli úspešne načítané do zoznamu nižšie!")
     except Exception as e:
@@ -179,9 +192,9 @@ if rezim == "Podľa kávy":
         kusy_1000 = st.number_input("1000g (ks):", min_value=0, step=1, key=f"k_1000_{st.session_state.form_key}")
 
     if st.button("➕ Pridať do zoznamu", type="secondary"):
-        if kusy_220 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 220, "Kusy": kusy_220, "Zabalené (ks)": kusy_220, "Potvrdene": False})
-        if kusy_500 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 500, "Kusy": kusy_500, "Zabalené (ks)": kusy_500, "Potvrdene": False})
-        if kusy_1000 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 1000, "Kusy": kusy_1000, "Zabalené (ks)": kusy_1000, "Potvrdene": False})
+        if kusy_220 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 220, "Kusy": kusy_220, "Zabalené (ks)": kusy_220, "Potvrdene": False, "❌ Zmazať": False})
+        if kusy_500 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 500, "Kusy": kusy_500, "Zabalené (ks)": kusy_500, "Potvrdene": False, "❌ Zmazať": False})
+        if kusy_1000 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 1000, "Kusy": kusy_1000, "Zabalené (ks)": kusy_1000, "Potvrdene": False, "❌ Zmazať": False})
         vynuluj_policka()
         st.rerun()
 
@@ -196,7 +209,7 @@ else:
     if st.button("➕ Pridať do zoznamu", type="secondary"):
         for k, v in inputs_kavy.items():
             if v > 0:
-                st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": k, "Gramáž": gramaz, "Kusy": v, "Zabalené (ks)": v, "Potvrdene": False})
+                st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": k, "Gramáž": gramaz, "Kusy": v, "Zabalené (ks)": v, "Potvrdene": False, "❌ Zmazať": False})
         vynuluj_policka()
         st.rerun()
 
@@ -208,7 +221,6 @@ with col_zoznam:
     st.subheader("🛒 Aktuálne objednávky")
     
     if st.session_state.aktualne_objednavky:
-        # 1. Kontrola a pridanie pomocného stĺpca pre mazanie
         for obj in st.session_state.aktualne_objednavky:
             if 'Zabalené (ks)' not in obj:
                 obj['Zabalené (ks)'] = obj['Kusy']
@@ -219,7 +231,6 @@ with col_zoznam:
 
         df_objednavky_vstup = pd.DataFrame(st.session_state.aktualne_objednavky)
         
-        # 2. Zobrazenie editovateľnej tabuľky
         st.write("*(Dvojklikom prepíšeš údaje. Pre vymazanie zaškrtni box 'Zmazať' vpravo a použi tlačidlo pod tabuľkou)*")
         upravene_df = st.data_editor(
             df_objednavky_vstup, 
@@ -228,18 +239,15 @@ with col_zoznam:
             hide_index=False
         )
         
-        # 3. Uloženie zmien do pamäte aplikácie
         st.session_state.aktualne_objednavky = upravene_df.to_dict('records')
         
-        # 4. Tlačidlá na selektívne alebo úplné mazanie
         col_del1, col_del2 = st.columns(2)
         with col_del1:
-            if st.button("🗑️ Odstrániť zaškrtnuté položky", type="primary"):
-                # Ponechá v zozname len tie, ktoré NIE SÚ zaškrtnuté na zmazanie
+            if st.button("🗑️ Odstrániť zaškrtnuté", type="primary"):
                 st.session_state.aktualne_objednavky = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
                 st.rerun()
         with col_del2:
-            if st.button("💣 Vymazať úplne všetko"):
+            if st.button("💣 Vymazať všetko"):
                 st.session_state.aktualne_objednavky = []
                 st.rerun()
     else:
@@ -251,12 +259,15 @@ with col_vypocet:
         if not st.session_state.aktualne_objednavky:
             st.warning("Prázdne! Najprv pridaj nejaké objednávky.")
         else:
-            df_objednavky_export = pd.DataFrame(st.session_state.aktualne_objednavky)
+            # Ignorujeme zmazané položky pri výpočte
+            aktivne_objednavky = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
+            df_objednavky_export = pd.DataFrame(aktivne_objednavky)
+            
             potreba_zelenej_podla_zrna = {}
             potreba_uprazenej_podla_zrna = {}
             potreba_skladania_blendov = {}
             
-            for o in st.session_state.aktualne_objednavky:
+            for o in aktivne_objednavky:
                 uprazena_kg = (o["Kusy"] * o["Gramáž"] / 1000.0)
                 zelena_kg_zaklad = uprazena_kg / (1 - (STANDARDNY_VYPEK / 100.0))
                 
@@ -320,12 +331,11 @@ with col_vypocet:
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 df_plan.to_excel(writer, index=False, sheet_name='Plan_Prazenia')
-                df_objednavky_export.to_excel(writer, index=False, sheet_name='Spracovane_Objednavky')
+                df_objednavky_export.drop(columns=['❌ Zmazať'], errors='ignore').to_excel(writer, index=False, sheet_name='Spracovane_Objednavky')
                 df_blendov.to_excel(writer, index=False, sheet_name='Plan_Blendov')
             
             st.divider()
             
-            # Callback pre automaticke ulozenie
             def callback_uloz_3harok(data_bytes, f_name):
                 ok = nahraj_na_google_drive(data_bytes, f_name, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 if ok:
@@ -364,13 +374,11 @@ if st.session_state.aktualne_objednavky:
 
     st.markdown("### 📱 Mobilná kontrola balenia")
     
-    
-    zoznam_na_balenie = ["Všetci"] + sorted(list(set([o['Odberateľ'] for o in st.session_state.aktualne_objednavky])))
+    zoznam_na_balenie = ["Všetci"] + sorted(list(set([o['Odberateľ'] for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)])))
     filter_balenie = st.selectbox("Vyber si, koho ideš práve baliť (filter):", zoznam_na_balenie)
     
     st.info("Karta zasvieti nazeleno až vtedy, keď fyzicky skontroluješ balenie a odškrtneš ho.")
 
-    # ------ NOVÉ: Pridanie kávy navyše priamo v balení ------
     with st.expander("➕ Zvýšila ti káva? Pridať položku navyše (napr. na Sklad)"):
         col_ex1, col_ex2, col_ex3 = st.columns(3)
         with col_ex1:
@@ -387,16 +395,20 @@ if st.session_state.aktualne_objednavky:
                 "Káva": ex_kava,
                 "Gramáž": ex_gramaz,
                 "Kusy": ex_kusy,
-                "Zabalené (ks)": ex_kusy, # Predvyplníme rovno ako zabalené
-                "Potvrdene": True # Rovno aj potvrdíme
+                "Zabalené (ks)": ex_kusy,
+                "Potvrdene": True,
+                "❌ Zmazať": False
             })
             st.success(f"Pridané {ex_kusy}ks {ex_kava} ({ex_gramaz}g) pre {ex_odberatel}.")
             st.rerun()
-    # ---------------------------------------------------------
 
     upravene_objednavky = []
     
     for i, obj in enumerate(st.session_state.aktualne_objednavky):
+        if obj.get('❌ Zmazať', False):
+            upravene_objednavky.append(obj)
+            continue
+            
         if filter_balenie == "Všetci" or obj['Odberateľ'] == filter_balenie:
             with st.container():
                 aktualne_zabalene = int(obj.get('Zabalené (ks)', obj['Kusy']))
@@ -424,133 +436,134 @@ if st.session_state.aktualne_objednavky:
             upravene_objednavky.append(obj.copy())
 
     st.session_state.aktualne_objednavky = upravene_objednavky
-    upravene_balenie_df = pd.DataFrame(st.session_state.aktualne_objednavky)
-
+    
     if st.button("💾 Uložiť priebežne na Google (počas balenia)", type="primary", use_container_width=True):
         if uloz_do_google_sheets(st.session_state.aktualne_objednavky):
             st.toast("Progres bol bezpečne uložený do Google Tabuľky!", icon="✅")
     
     st.write("---")
     st.markdown("### 📤 Finálny Export pre účtovníctvo")
-    zoznam_odberatelov_export = ["Všetci"] + sorted(list(upravene_balenie_df['Odberateľ'].unique()))
-    vybrany_odberatel = st.selectbox("Filtrovať export do Omegy (pre Evičku):", zoznam_odberatelov_export)
     
-    try:
-        df_cennik = nacitaj_cennik()
-        df_vypocet = upravene_balenie_df.copy()
+    upravene_balenie_df = pd.DataFrame([o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)])
+    if not upravene_balenie_df.empty:
+        zoznam_odberatelov_export = ["Všetci"] + sorted(list(upravene_balenie_df['Odberateľ'].unique()))
+        vybrany_odberatel = st.selectbox("Filtrovať export do Omegy (pre Evičku):", zoznam_odberatelov_export)
         
-        # Do exportu idú len položky, kde sa reálne balilo viac ako 0 kusov a sú zaškrtnuté/potvrdené
-        df_vypocet = df_vypocet[(df_vypocet['Zabalené (ks)'] > 0) & (df_vypocet['Potvrdene'] == True)]
-        
-        if vybrany_odberatel != "Všetci":
-            df_vypocet = df_vypocet[df_vypocet['Odberateľ'] == vybrany_odberatel]
+        try:
+            df_cennik = nacitaj_cennik()
+            df_vypocet = upravene_balenie_df.copy()
             
-        preklad_cennik = {
-            "Brazília": "Brazília – Donas do Café",
-            "Etiopia Yerg.": "Etiópia – Yirgacheffe",
-            "Etiopia BG": "Etiópia – Banko Gotiti",
-            "Honduras": "Honduras – SHG EP San Andrés",
-            "Columbia": "Kolumbia – Huila condor",
-            "Indonezia": "Indinezia", 
-            "India": "India Plantation AA",
-            "Aranka": "Aranka",
-            "Frištuk": "Frištuk",
-            "K52%": "K52% / Cucflek",
-            "Cucflek": "K52% / Cucflek",
-            "Peru": "Peru",
-            "Rwanda": "Rwanda"
-        }
-
-        preklad_faktura = {
-            "Brazília": "Brazília – Donas do Café",
-            "Etiopia Yerg.": "Etiópia – Yirgacheffe",
-            "Etiopia BG": "Etiópia – Banko Gotiti",
-            "Honduras": "Honduras – SHG EP San Andrés",
-            "Columbia": "Kolumbia – Huila condor",
-            "Indonezia": "Indonézia", 
-            "India": "India Plantation AA",
-            "Aranka": "Aranka",
-            "Frištuk": "Frištuk",
-            "K52%": "Kopaničiarska 52%",
-            "Cucflek": "Cucflek",
-            "Peru": "Peru",
-            "Rwanda": "Rwanda"
-        }
-        
-        if not df_vypocet.empty:
-            df_vypocet['Hladat_v_cenniku'] = df_vypocet['Káva'].map(preklad_cennik).fillna(df_vypocet['Káva'])
-            df_vypocet['Produkt_Faktura'] = df_vypocet['Káva'].map(preklad_faktura).fillna(df_vypocet['Káva'])
+            # Do exportu idú len položky, kde sa reálne balilo viac ako 0 kusov a sú zaškrtnuté/potvrdené
+            df_vypocet = df_vypocet[(df_vypocet['Zabalené (ks)'] > 0) & (df_vypocet['Potvrdene'] == True)]
             
-            df_vypocet.rename(columns={'Zabalené (ks)': 'Množstvo (ks)'}, inplace=True)
-            df_vypocet['Gramaz_text'] = df_vypocet['Gramáž'].apply(lambda x: "1 000 g" if x == 1000 else f"{x} g")
-            
-            df_export = pd.merge(df_vypocet, df_cennik, left_on=['Hladat_v_cenniku', 'Gramaz_text'], right_on=['Produkt', 'Gramáž'], how='left')
-            df_export['Cena pre obchodníka (€)'] = df_export['Cena pre obchodníka (€)'].fillna(0).round(2)
-            
-            df_export['Produkt'] = df_export['Produkt_Faktura']
-            df_export['Gramáž'] = df_export['Gramaz_text']
-            
-            df_export = df_export[['Odberateľ', 'Produkt', 'Gramáž', 'Množstvo (ks)', 'Cena pre obchodníka (€)']]
-            df_export.rename(columns={'Cena pre obchodníka (€)': 'Jednotková cena (€)'}, inplace=True)
-            
-            df_export['Celková suma (€)'] = (df_export['Množstvo (ks)'] * df_export['Jednotková cena (€)']).round(2)
-            
-            # --- EXCEL ---
-            excel_buffer = io.BytesIO()
-            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                df_export.to_excel(writer, index=False, sheet_name='Prehľad pre Evičku')
-                workbook = writer.book
-                worksheet = writer.sheets['Prehľad pre Evičku']
-                header_format = workbook.add_format({'bold': True, 'bg_color': '#4F81BD', 'font_color': 'white'})
-                for col_num, value in enumerate(df_export.columns.values):
-                    worksheet.write(0, col_num, value, header_format)
-                    worksheet.set_column(col_num, col_num, 20)
-            excel_data = excel_buffer.getvalue()
-
-            # --- TXT OMEGA ---
-            lines = []
-            lines.append("R00\tT01")
-            grouped = df_export.groupby('Odberateľ')
-            invoice_counter = 1
-            today_str = datetime.now().strftime("%d.%m.%Y")
-            due_str = (datetime.now() + timedelta(days=14)).strftime("%d.%m.%Y")
-            
-            for odberatel, group in grouped:
-                cislo_dokladu = f"EXP{datetime.now().strftime('%Y%m%d')}{invoice_counter:02d}"
-                suma_celkom = group['Celková suma (€)'].sum()
+            if vybrany_odberatel != "Všetci":
+                df_vypocet = df_vypocet[df_vypocet['Odberateľ'] == vybrany_odberatel]
                 
-                # OPRAVA: Pridaných 8 prázdnych položiek a na koniec číslo "11"
-                r01 = ["R01", cislo_dokladu, str(odberatel), "", today_str, due_str, today_str, "0.00", f"{suma_celkom:.2f}", "", "", "", "", "", "", "", "", "11"]
-                lines.append("\t".join(r01))
-                
-                for _, row in group.iterrows():
-                    r02 = ["R02", f"{row['Produkt']} {row['Gramáž']}", str(row['Množstvo (ks)']), "ks", f"{row['Jednotková cena (€)']:.2f}", "V", "0.00", f"{row['Jednotková cena (€)']:.2f}", "0", "V"]
-                    lines.append("\t".join(r02))
-                invoice_counter += 1
-                
-            txt_data = "\n".join(lines).encode('windows-1250', errors='replace')
+            preklad_cennik = {
+                "Brazília": "Brazília – Donas do Café",
+                "Etiopia Yerg.": "Etiópia – Yirgacheffe",
+                "Etiopia BG": "Etiópia – Banko Gotiti",
+                "Honduras": "Honduras – SHG EP San Andrés",
+                "Columbia": "Kolumbia – Huila condor",
+                "Indonezia": "Indinezia", 
+                "India": "India Plantation AA",
+                "Aranka": "Aranka",
+                "Frištuk": "Frištuk",
+                "K52%": "K52% / Cucflek",
+                "Cucflek": "K52% / Cucflek",
+                "Peru": "Peru",
+                "Rwanda": "Rwanda"
+            }
+
+            preklad_faktura = {
+                "Brazília": "Brazília – Donas do Café",
+                "Etiopia Yerg.": "Etiópia – Yirgacheffe",
+                "Etiopia BG": "Etiópia – Banko Gotiti",
+                "Honduras": "Honduras – SHG EP San Andrés",
+                "Columbia": "Kolumbia – Huila condor",
+                "Indonezia": "Indonézia", 
+                "India": "India Plantation AA",
+                "Aranka": "Aranka",
+                "Frištuk": "Frištuk",
+                "K52%": "Kopaničiarska 52%",
+                "Cucflek": "Cucflek",
+                "Peru": "Peru",
+                "Rwanda": "Rwanda"
+            }
             
-            meno_do_suboru = "Vsetci" if vybrany_odberatel == "Všetci" else vybrany_odberatel.replace(" ", "_")
-            názov_excelu = f"Kikiriki_Prehlad_Evicka_{meno_do_suboru}_{DNESNY_DATUM}.xlsx"
-            názov_txt = f"Kikiriki_Import_Omega_{meno_do_suboru}_{DNESNY_DATUM}.txt"
+            if not df_vypocet.empty:
+                df_vypocet['Hladat_v_cenniku'] = df_vypocet['Káva'].map(preklad_cennik).fillna(df_vypocet['Káva'])
+                df_vypocet['Produkt_Faktura'] = df_vypocet['Káva'].map(preklad_faktura).fillna(df_vypocet['Káva'])
+                
+                df_vypocet.rename(columns={'Zabalené (ks)': 'Množstvo (ks)'}, inplace=True)
+                df_vypocet['Gramaz_text'] = df_vypocet['Gramáž'].apply(lambda x: "1 000 g" if x == 1000 else f"{x} g")
+                
+                df_export = pd.merge(df_vypocet, df_cennik, left_on=['Hladat_v_cenniku', 'Gramaz_text'], right_on=['Produkt', 'Gramáž'], how='left')
+                df_export['Cena pre obchodníka (€)'] = df_export['Cena pre obchodníka (€)'].fillna(0).round(2)
+                
+                df_export['Produkt'] = df_export['Produkt_Faktura']
+                df_export['Gramáž'] = df_export['Gramaz_text']
+                
+                df_export = df_export[['Odberateľ', 'Produkt', 'Gramáž', 'Množstvo (ks)', 'Cena pre obchodníka (€)']]
+                df_export.rename(columns={'Cena pre obchodníka (€)': 'Jednotková cena (€)'}, inplace=True)
+                
+                df_export['Celková suma (€)'] = (df_export['Množstvo (ks)'] * df_export['Jednotková cena (€)']).round(2)
+                
+                # --- EXCEL ---
+                excel_buffer = io.BytesIO()
+                with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                    df_export.to_excel(writer, index=False, sheet_name='Prehľad pre Evičku')
+                    workbook = writer.book
+                    worksheet = writer.sheets['Prehľad pre Evičku']
+                    header_format = workbook.add_format({'bold': True, 'bg_color': '#4F81BD', 'font_color': 'white'})
+                    for col_num, value in enumerate(df_export.columns.values):
+                        worksheet.write(0, col_num, value, header_format)
+                        worksheet.set_column(col_num, col_num, 20)
+                excel_data = excel_buffer.getvalue()
 
-            col1, col2 = st.columns(2)
-            with col1:
-                st.download_button("📊 Stiahnuť Excel pre Evičku (lokálne)", data=excel_data, file_name=názov_excelu, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            with col2:
-                st.download_button("⚙️ Stiahnuť TXT pre Kros (lokálne)", data=txt_data, file_name=názov_txt, mime="text/plain")
+                # --- TXT OMEGA ---
+                lines = []
+                lines.append("R00\tT01")
+                grouped = df_export.groupby('Odberateľ')
+                invoice_counter = 1
+                today_str = datetime.now().strftime("%d.%m.%Y")
+                due_str = (datetime.now() + timedelta(days=14)).strftime("%d.%m.%Y")
+                
+                for odberatel, group in grouped:
+                    cislo_dokladu = f"EXP{datetime.now().strftime('%Y%m%d')}{invoice_counter:02d}"
+                    suma_celkom = group['Celková suma (€)'].sum()
+                    r01 = ["R01", cislo_dokladu, str(odberatel), "", today_str, due_str, today_str, "0.00", f"{suma_celkom:.2f}", "", "", "", "", "", "", "", "", "11"]
+                    lines.append("\t".join(r01))
+                    
+                    for _, row in group.iterrows():
+                        r02 = ["R02", f"{row['Produkt']} {row['Gramáž']}", str(row['Množstvo (ks)']), "ks", f"{row['Jednotková cena (€)']:.2f}", "V", "0.00", f"{row['Jednotková cena (€)']:.2f}", "0", "V"]
+                        lines.append("\t".join(r02))
+                    invoice_counter += 1
+                    
+                txt_data = "\n".join(lines).encode('windows-1250', errors='replace')
+                
+                meno_do_suboru = "Vsetci" if vybrany_odberatel == "Všetci" else vybrany_odberatel.replace(" ", "_")
+                názov_excelu = f"Kikiriki_Prehlad_Evicka_{meno_do_suboru}_{DNESNY_DATUM}.xlsx"
+                názov_txt = f"Kikiriki_Import_Omega_{meno_do_suboru}_{DNESNY_DATUM}.txt"
 
-            st.write("")
-            if st.button("📤 Odoslať Evičke priamo do zložky 'Evička export' na Google Drive", type="primary", use_container_width=True):
-                with st.spinner("Nahrávam na Google Drive..."):
-                    excel_ok = nahraj_na_google_drive(excel_data, názov_excelu, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-                    txt_ok = nahraj_na_google_drive(txt_data, názov_txt, 'text/plain')
-                    if excel_ok and txt_ok:
-                        st.success("✅ Obe súbory boli úspešne nahraté do zložky 'Evička export'!")
-        else:
-            st.warning("Pre tohto odberateľa nie sú zaznamenané/potvrdené žiadne zabalené kusy.")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.download_button("📊 Stiahnuť Excel pre Evičku (lokálne)", data=excel_data, file_name=názov_excelu, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                with col2:
+                    st.download_button("⚙️ Stiahnuť TXT pre Kros (lokálne)", data=txt_data, file_name=názov_txt, mime="text/plain")
 
-    except Exception as e:
-        st.error(f"Technická chyba: {e}")
+                st.write("")
+                if st.button("📤 Odoslať Evičke priamo do zložky 'Evička export' na Google Drive", type="primary", use_container_width=True):
+                    with st.spinner("Nahrávam na Google Drive..."):
+                        excel_ok = nahraj_na_google_drive(excel_data, názov_excelu, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                        txt_ok = nahraj_na_google_drive(txt_data, názov_txt, 'text/plain')
+                        if excel_ok and txt_ok:
+                            st.success("✅ Obe súbory boli úspešne nahraté do zložky 'Evička export'!")
+            else:
+                st.warning("Pre tohto odberateľa nie sú zaznamenané/potvrdené žiadne zabalené kusy.")
+        except Exception as e:
+            st.error(f"Technická chyba: {e}")
+    else:
+        st.info("Zoznam po odfiltrovaní zmazaných položiek je prázdny.")
 else:
     st.info("Pridaj nejaké objednávky vyššie, aby sa ti aktivovali tlačidlá na export pre Evičku.")
