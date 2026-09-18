@@ -116,7 +116,6 @@ def uloz_export_pre_evicku(odberatel, txt_obsah):
         evicka_sheet.append_row([cas_ulozenia, odberatel, txt_obsah])
         return True
     except Exception as e:
-        st.error(f"Nepodarilo sa uložiť export pre Evičku: {e}")
         return False
 
 def nacitaj_exporty_pre_evicku():
@@ -661,13 +660,16 @@ if st.session_state.aktualne_objednavky:
                 with col1:
                     st.download_button("📊 Stiahnuť Excel pre Evičku (lokálne)", data=excel_data, file_name=názov_excelu, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", help="Stiahne priamo do tvojho počítača Excelový prehľad s cenami pre fakturáciu.")
                 with col2:
-                    st.download_button("⚙️ Stiahnuť TXT pre Kros (lokálne)", data=txt_data, file_name=názov_txt, mime="text/plain", help="Stiahne priamo do tvojho počítača TXT súbor (18 stĺpcov R01/R02) pripravený na import do Omegy.")
-
-                st.write("")
-                # Uloženie do tajného archívu pre Evičku
-                if st.button("📥 Uložiť tento TXT export do tajného archívu pre Evičku", type="primary", use_container_width=True):
-                    if uloz_export_pre_evicku(vybrany_odberatel, raw_txt_string):
-                        st.success("✅ TXT dáta boli úspešne uložené do Evičkinho portálu! Môže si ich kedykoľvek stiahnuť v bočnom paneli (heslo cicky).")
+                    # TU JE TÁ ZMENA: on_click priamo uloží dáta Evičke do logu v momente sťahovania!
+                    st.download_button(
+                        label="⚙️ Stiahnuť TXT pre Kros + ☁️ Uložiť pre Evičku", 
+                        data=txt_data, 
+                        file_name=názov_txt, 
+                        mime="text/plain", 
+                        on_click=uloz_export_pre_evicku, 
+                        args=(vybrany_odberatel, raw_txt_string), 
+                        help="Stiahne ti do počítača TXT súbor a v tej istej sekunde ho automaticky uloží aj do tajného Evičkinho archívu na cloude."
+                    )
 
             else:
                 st.warning("Pre tohto odberateľa nie sú zaznamenané/potvrdené žiadne zabalené kusy.")
