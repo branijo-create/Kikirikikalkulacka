@@ -123,6 +123,17 @@ def vynuluj_policka():
 # --- HLAVNÉ ROZHRANIE ---
 st.title("☕ Roastery Manager v2.9")
 
+# --- CENTRÁLNA PAMÄŤ - NAČÍTANIE ---
+col_load1, col_load2 = st.columns([1, 2])
+with col_load1:
+    if st.button("🔄 Načítať spoločnú prácu z Google disku", type="primary"):
+        zaloha, cas_poslednej_upravy = nacitaj_z_google_sheets()
+        if zaloha:
+            st.session_state.aktualne_objednavky = zaloha
+            st.success(f"✅ Dáta úspešne načítané! (Posledná úprava: **{cas_poslednej_upravy}**)")
+        else:
+            st.warning("Záloha na Google Drive je zatiaľ prázdna.")
+
 # --- IMPORT Z EXCELU ---
 st.subheader("📁 Import objednávok z Excelu")
 st.write("Excel musí obsahovať stĺpce s presnými názvami: **Odberateľ**, **Káva**, **Gramáž**, **Kusy**")
@@ -353,16 +364,6 @@ if st.session_state.aktualne_objednavky:
 
     st.markdown("### 📱 Mobilná kontrola balenia")
     
-    col_obnova, col_medzera = st.columns([1, 2])
-    with col_obnova:
-        if st.button("🔄 Načítať z Google zálohy", type="secondary"):
-            zaloha = nacitaj_z_google_sheets()
-            if zaloha:
-                st.session_state.aktualne_objednavky = zaloha
-                st.success("Dáta z mobilu úspešne načítané!")
-                st.rerun()
-            else:
-                st.warning("Záloha na Google Drive je prázdna alebo sa k nej nedá pripojiť.")
     
     zoznam_na_balenie = ["Všetci"] + sorted(list(set([o['Odberateľ'] for o in st.session_state.aktualne_objednavky])))
     filter_balenie = st.selectbox("Vyber si, koho ideš práve baliť (filter):", zoznam_na_balenie)
