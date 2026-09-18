@@ -54,26 +54,21 @@ def uloz_do_google_sheets(data):
         client = gspread.authorize(creds)
         spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
         
-        # 1. Klasická záloha (aktuálny živý stav)
         sheet1 = spreadsheet.sheet1
         sheet1.update_acell('A1', json.dumps(data, ensure_ascii=False))
         cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         sheet1.update_acell('B1', cas_ulozenia)
         
-        # 2. Tajná čierna skrinka (Nekonečný LOG archív)
         try:
             log_sheet = spreadsheet.worksheet("Logy")
         except:
-            # Ak list 'Logy' ešte neexistuje, vytvorí ho potichu sám
             log_sheet = spreadsheet.add_worksheet(title="Logy", rows="1000", cols="2")
             log_sheet.append_row(["Čas uloženia", "Dáta (JSON)"])
         
-        # Pridá nový riadok na koniec archívu
         log_sheet.append_row([cas_ulozenia, json.dumps(data, ensure_ascii=False)])
-        
         return True
     except Exception as e:
-        st.error(f"Nepodarilo sa uložiť na Google Drive. Skontroluj zdieľanie a práva Editora. Detail: {e}")
+        st.error(f"Nepodarilo sa uložiť na Google Drive. Detail: {e}")
         return False
 
 def nacitaj_z_google_sheets():
@@ -88,10 +83,21 @@ def nacitaj_z_google_sheets():
         
         data = json.loads(val_data) if val_data else None
         cas = val_cas if val_cas else "Neznámy čas"
-        
         return data, cas
     except Exception as e:
         return None, None
+
+def nacitaj_logy_z_google_sheets():
+    try:
+        import gspread
+        creds = get_google_credentials()
+        client = gspread.authorize(creds)
+        spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
+        log_sheet = spreadsheet.worksheet("Logy")
+        zaznamy = log_sheet.get_all_values()[1:] # Preskočí hlavičku
+        return list(reversed(zaznamy)) # Najnovšie dá úplne hore
+    except Exception as e:
+        return []
 
 # --- PAMÄŤ APLIKÁCIE ---
 if 'aktualne_objednavky' not in st.session_state:
@@ -102,6 +108,39 @@ if 'form_key' not in st.session_state:
 
 def vynuluj_policka():
     st.session_state.form_key += 1
+
+
+# --- TAJNÝ BOČNÝ PANEL (STROJ ČASU) ---
+with st.sidebar:
+    st.write("")
+    tajne_heslo = st.text_input("🔑", type="password", help="Len pre Braňa")
+    
+    if tajne_heslo == "kikiriki":
+        st.warning("🛠️ **TAJNÝ SERVISNÝ REŽIM**")
+        if st.button("📥 Načítať archív logov", use_container_width=True):
+            st.session_state.logy_data_zoznam = nacitaj_logy_z_google_sheets()
+            
+        if st.session_state.get('logy_data_zoznam'):
+            logy = st.session_state.logy_data_zoznam
+            if not logy:
+                st.info("Zatiaľ žiadne záznamy v logu.")
+            else:
+                moznosti = [f"{riadok[0]}" for riadok in logy]
+                vybrany_cas = st.selectbox("Vyber čas na obnovenie:", moznosti)
+                
+                if st.button("⚠️ OBNOVIŤ TENTO ČAS", type="primary", use_container_width=True):
+                    vybrany_json = next(riadok[1] for riadok in logy if riadok[0] == vybrany_cas)
+                    try:
+                        obnovene_data = json.loads(vybrany_json)
+                        st.session_state.aktualne_objednavky = obnovene_data
+                        if uloz_do_google_sheets(obnovene_data):
+                            st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** Obnovené zo zálohy z {vybrany_cas}"
+                            st.session_state.zaloha_data = obnovene_data
+                            st.success("✅ Systém bol úspešne vrátený v čase!")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Chyba pri obnove: {e}")
+
 
 # --- HLAVNÉ ROZHRANIE ---
 st.title("☕ Roastery Manager v2.10")
@@ -118,10 +157,8 @@ if 'info_cloud' not in st.session_state:
         st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** {pocet} aktívnych položiek | 🕒 Posledná úprava: **{cas}**"
         st.session_state.zaloha_data = aktivne
 
-# Vykreslenie modrej informačnej bubliny hneď na vrchu
 st.info(st.session_state.info_cloud)
 
-# Rozbaľovacie okienko s náhľadom
 if st.session_state.get('zaloha_data'):
     with st.expander("👀 Klikni sem pre zobrazenie toho, čo je aktuálne uložené na Disku"):
         df_ukazka = pd.DataFrame(st.session_state.zaloha_data)
@@ -185,9 +222,7 @@ if nahraty_subor is not None:
 
         if st.button("📥 Načítať dáta z tohto Excelu", help="INTELIGENTNÝ IMPORT: Ak mali položky v Exceli už niečo zabalené alebo boli potvrdené, zachovajú si svoj stav!"):
             for index, row in df_import.iterrows():
-                # Bezpečné načítanie: ak v exceli existuje info o zabalených kusoch a potvrdení, zapamätá si ho.
                 kusy_zaklad = int(row.get("Kusy", 0))
-                # Ak stĺpec "Zabalené (ks)" neexistuje, použije defaultne pôvodné kusy
                 zabalene_hist = int(row.get("Zabalené (ks)", kusy_zaklad)) 
                 potvrdene_hist = bool(row.get("Potvrdene", False))
                 
@@ -262,14 +297,12 @@ with col_zoznam:
         df_objednavky_vstup = pd.DataFrame(st.session_state.aktualne_objednavky)
         
         st.write("*(Dvojklikom prepíšeš údaje. Pre vymazanie zaškrtni box 'Zmazať' vpravo a použi tlačidlo pod tabuľkou)*")
-        
-        # OPRAVA 2: Zmenené na num_rows="fixed", aby tabuľka nepridávala prázdne riadky pri kliknutí!
         upravene_df = st.data_editor(
             df_objednavky_vstup, 
             use_container_width=True, 
-            num_rows="fixed", 
+            num_rows="fixed",
             hide_index=False,
-            key="tabulka_objednavok" 
+            key="tabulka_objednavok"
         )
         
         st.session_state.aktualne_objednavky = upravene_df.to_dict('records')
