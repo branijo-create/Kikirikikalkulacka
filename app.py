@@ -5,7 +5,7 @@ import io
 from datetime import datetime, timedelta
 import json
 
-st.set_page_config(page_title="Roastery Manager v3.2", page_icon="☕", layout="wide")
+st.set_page_config(page_title="Roastery Manager v3.3", page_icon="☕", layout="wide")
 
 # --- KONFIGURÁCIA Z TVOJHO KÓDU ---
 KAPACITA_ZELENA_BATCH = 5.0
@@ -59,11 +59,11 @@ def nacitaj_z_google_sheets():
             hodnoty = sheet.row_values(1)
             val_data = hodnoty[0] if len(hodnoty) > 0 else None
             val_cas = hodnoty[1] if len(hodnoty) > 1 else "Neznámy čas"
-            val_nazov = hodnoty[2] if len(hodnoty) > 2 else f"Prazenie_{DNESNY_DATUM}"
+            val_nazov = hodnoty[2] if len(hodnoty) > 2 and hodnoty[2].strip() != "" else ""
         except:
             val_data = None
             val_cas = "Neznámy čas"
-            val_nazov = f"Prazenie_{DNESNY_DATUM}"
+            val_nazov = ""
             
         data = json.loads(val_data) if val_data else None
         return data, val_cas, val_nazov
@@ -80,12 +80,10 @@ def uloz_do_google_sheets(data, nazov_prazenia):
         sheet1 = spreadsheet.sheet1
         cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         
-        # Uloží aktuálny stav aj s názvom praženia
         sheet1.update_acell('A1', json.dumps(data, ensure_ascii=False))
         sheet1.update_acell('B1', cas_ulozenia)
         sheet1.update_acell('C1', str(nazov_prazenia))
         
-        # Zapíše log - teraz s 3 stĺpcami (Čas, Názov, Dáta)
         try:
             log_sheet = spreadsheet.worksheet("Logy")
         except:
@@ -98,7 +96,6 @@ def uloz_do_google_sheets(data, nazov_prazenia):
         return False
 
 def auto_uloz():
-    # Neviditeľné uloženie na pozadí, načíta aktuálny názov z políčka
     aktualny_nazov = st.session_state.get('nazov_prazenia', f"Prazenie_{DNESNY_DATUM}")
     uloz_do_google_sheets(st.session_state.aktualne_objednavky, aktualny_nazov)
 
@@ -148,6 +145,7 @@ def nacitaj_exporty_pre_evicku():
 if 'aktualne_objednavky' not in st.session_state:
     zaloha, cas, n_prazenia = nacitaj_z_google_sheets()
     st.session_state.aktualne_objednavky = zaloha if zaloha else []
+    # Ak cloud má už uložený názov, natiahneme ten. Ak je prázdny, dáme dnešný dátum.
     st.session_state.pociatocny_nazov = n_prazenia if n_prazenia else f"Prazenie_{DNESNY_DATUM}"
 
 if 'nazov_prazenia' not in st.session_state:
@@ -175,16 +173,13 @@ with st.sidebar:
             if logy:
                 moznosti = []
                 for r in logy:
-                    # Ak je log nový (má 3 stĺpce - Čas, Názov, Json)
-                    if len(r) >= 3:
-                        moznosti.append(f"{r[0]} | {r[1]}")
-                    else:
-                        moznosti.append(f"{r[0]}")
+                    if len(r) >= 3: moznosti.append(f"{r[0]} | {r[1]}")
+                    else: moznosti.append(f"{r[0]}")
                 
                 vybrany_cas = st.selectbox("Vyber čas na obnovenie:", moznosti)
                 if st.button("⚠️ OBNOVIŤ TENTO ČAS", type="primary", use_container_width=True):
                     idx = moznosti.index(vybrany_cas)
-                    vybrany_json = logy[idx][-1] # Json je vždy na konci
+                    vybrany_json = logy[idx][-1] 
                     try:
                         obnovene_data = json.loads(vybrany_json)
                         st.session_state.aktualne_objednavky = obnovene_data
@@ -216,10 +211,9 @@ with st.sidebar:
                 )
 
 # --- HLAVNÉ ROZHRANIE ---
-st.title("☕ Roastery Manager v3.2")
+st.title("☕ Roastery Manager v3.3")
 
-# Políčko pre názov je ihneď prepojené s auto_uloz, zmena sa pamätá na Disku
-st.text_input("📅 Názov aktuálneho praženia (Tento názov si systém pamätá a označuje ním Logy aj sťahované súbory):", key="nazov_prazenia", on_change=auto_uloz)
+st.text_input("📅 Názov aktuálneho praženia (Nemusíš prepisovať každý deň, drží sa to z Disku):", key="nazov_prazenia", on_change=auto_uloz)
 
 tab1, tab2 = st.tabs(["🛒 1. Objednávky a Praženie", "📦 2. Kontrola balenia a Export"])
 
@@ -227,7 +221,6 @@ tab1, tab2 = st.tabs(["🛒 1. Objednávky a Praženie", "📦 2. Kontrola balen
 # TAB 1: OBJEDNÁVKY A PRAŽENIE
 # ========================================================
 with tab1:
-    # --- KONTROLA STAVU (ZOBRAZENIE NAHĽADU) ---
     if 'info_cloud' not in st.session_state:
         zaloha, cas, _ = nacitaj_z_google_sheets()
         if not zaloha:
@@ -246,7 +239,6 @@ with tab1:
             if not df_ukazka.empty:
                 st.dataframe(df_ukazka[['Odberateľ', 'Káva', 'Gramáž', 'Kusy']], use_container_width=True, hide_index=True)
 
-    # VRÁTENÉ TLAČIDLÁ PRE RUČNÚ SYNCHRONIZÁCIU
     st.subheader("☁️ Spoločná zdieľaná pamäť (Braňo / Majo)")
     col_load, col_save = st.columns(2)
 
@@ -425,17 +417,26 @@ with tab1:
                 
                 df_blendov = pd.DataFrame(finalny_plan_blendov) if finalny_plan_blendov else pd.DataFrame()
                 
+                # Výpočet Sumáru obalov pre Excel
+                df_sum_obalov = df_objednavky_export.groupby(['Káva', 'Gramáž'])['Kusy'].sum().reset_index()
+                sum_pivot_ex = df_sum_obalov.pivot(index='Káva', columns='Gramáž', values='Kusy').fillna(0).astype(int)
+                for g in [220, 500, 1000]:
+                    if g not in sum_pivot_ex.columns: sum_pivot_ex[g] = 0
+                sum_pivot_ex['Spolu etikiet'] = sum_pivot_ex.sum(axis=1)
+                sum_pivot_ex.loc['🔥 SPOLU SÁČKOV'] = sum_pivot_ex.sum(numeric_only=True)
+                sum_pivot_ex = sum_pivot_ex[['Spolu etikiet', 220, 500, 1000]].reset_index()
+
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                     df_plan.to_excel(writer, index=False, sheet_name='Plan_Prazenia')
                     df_objednavky_export.drop(columns=['❌ Zmazať'], errors='ignore').to_excel(writer, index=False, sheet_name='Spracovane_Objednavky')
                     if not df_blendov.empty:
                         df_blendov.to_excel(writer, index=False, sheet_name='Plan_Blendov')
+                    sum_pivot_ex.to_excel(writer, index=False, sheet_name='Sumar_Obalov')
                 
-                # Názov súboru zoberie z premennej
                 nazov_suboru = f"KIKIRIKI_plan_{st.session_state.nazov_prazenia}.xlsx"
                 st.download_button(
-                    label="💾 Stiahnuť 3-hárok", data=buffer.getvalue(), file_name=nazov_suboru,
+                    label="💾 Stiahnuť 3-hárok (s pridaným Sumárom Obalov)", data=buffer.getvalue(), file_name=nazov_suboru,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary"
                 )
 
@@ -446,21 +447,42 @@ with tab2:
     if st.session_state.aktualne_objednavky:
         aktivne_balenie = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
         
-        # --- SUMÁR OBALOV A ETIKIET ---
-        st.markdown("### 🏷️ SUMÁR PRE SKLAD (Potreba etikiet a sáčkov)")
-        sumar_df = pd.DataFrame(aktivne_balenie)
-        if not sumar_df.empty:
-            df_sum = sumar_df.groupby(['Káva', 'Gramáž'])['Kusy'].sum().reset_index()
+        # --- ROZBALENIE FILTROV PRE BALENIE ---
+        st.markdown("### 📱 Filtre pre Sklad a Balenie")
+        col_f1, col_f2 = st.columns(2)
+        zoznam_odberatelov = ["Všetci"] + sorted(list(set([o['Odberateľ'] for o in aktivne_balenie])))
+        zoznam_kav = ["Všetky"] + sorted(list(set([o['Káva'] for o in aktivne_balenie])))
+        
+        with col_f1: filter_odb = st.selectbox("Filtrovať Odberateľa:", zoznam_odberatelov)
+        with col_f2: filter_kava = st.selectbox("Filtrovať Kávu:", zoznam_kav)
+
+        # Vyfiltrujeme data podla výberu hore
+        df_filtered = pd.DataFrame([o for o in aktivne_balenie if (filter_odb == "Všetci" or o['Odberateľ'] == filter_odb) and (filter_kava == "Všetky" or o['Káva'] == filter_kava)])
+
+        # --- SUMÁR OBALOV (OBROVSKÝ BOLD TEXT + TABUĽKA) ---
+        if not df_filtered.empty:
+            total_220 = df_filtered[df_filtered['Gramáž']==220]['Kusy'].sum() if 220 in df_filtered['Gramáž'].values else 0
+            total_500 = df_filtered[df_filtered['Gramáž']==500]['Kusy'].sum() if 500 in df_filtered['Gramáž'].values else 0
+            total_1000 = df_filtered[df_filtered['Gramáž']==1000]['Kusy'].sum() if 1000 in df_filtered['Gramáž'].values else 0
+            total_all = total_220 + total_500 + total_1000
+
+            st.markdown(f"## 🔥 **CELKOVO POTREBUJEŠ: {total_all} sáčkov**")
+            st.markdown(f"**Z toho: 220g: {total_220} ks | 500g: {total_500} ks | 1000g: {total_1000} ks**")
+
+            # Pivot tabulka
+            df_sum = df_filtered.groupby(['Káva', 'Gramáž'])['Kusy'].sum().reset_index()
             sum_pivot = df_sum.pivot(index='Káva', columns='Gramáž', values='Kusy').fillna(0).astype(int)
             for g in [220, 500, 1000]:
                 if g not in sum_pivot.columns: sum_pivot[g] = 0
             sum_pivot['Spolu etikiet'] = sum_pivot.sum(axis=1)
             
-            # Pridanie TOTÁLNEHO SÚČTU na spodok
+            # Pridanie TOTÁLNEHO SÚČTU BOLDOM
             sum_pivot.loc['🔥 SPOLU SÁČKOV'] = sum_pivot.sum(numeric_only=True)
-            
             sum_pivot = sum_pivot[['Spolu etikiet', 220, 500, 1000]].reset_index()
+            
             st.dataframe(sum_pivot, use_container_width=True, hide_index=True)
+        else:
+            st.warning("Pre tento filter neexistujú žiadne sáčky na balenie.")
 
         st.divider()
 
@@ -489,14 +511,8 @@ with tab2:
 
         st.divider()
 
-        # --- MOBILNÁ KONTROLA S DUÁLNYM FILTROM ---
-        st.markdown("### 📱 Mobilná kontrola balenia")
-        col_f1, col_f2 = st.columns(2)
-        zoznam_odberatelov = ["Všetci"] + sorted(list(set([o['Odberateľ'] for o in aktivne_balenie])))
-        zoznam_kav = ["Všetky"] + sorted(list(set([o['Káva'] for o in aktivne_balenie])))
-        
-        with col_f1: filter_odb = st.selectbox("Filter: Odberateľ", zoznam_odberatelov)
-        with col_f2: filter_kava = st.selectbox("Filter: Káva", zoznam_kav)
+        # --- SAMOTNÁ KONTROLA BALENIA ---
+        st.markdown("### Odškrtávanie sáčkov")
 
         def zmena_balenia_callback(index_v_liste):
             novy_pocet = st.session_state[f"pocet_{index_v_liste}"]
@@ -534,7 +550,9 @@ with tab2:
 
         # --- EXPORT PRE EVIČKU ---
         st.markdown("### 📤 Finálny Export pre účtovníctvo")
-        if not sumar_df.empty:
+        
+        sumar_vsetky = pd.DataFrame(aktivne_balenie)
+        if not sumar_vsetky.empty:
             vybrany_export_odberatel = st.selectbox("Filtrovať export do Omegy (pre Evičku):", zoznam_odberatelov)
             
             @st.cache_data
@@ -542,7 +560,7 @@ with tab2:
             
             try:
                 df_cennik = get_cennik()
-                df_vypocet = sumar_df[(sumar_df['Zabalené (ks)'] > 0) & (sumar_df['Potvrdene'] == True)].copy()
+                df_vypocet = sumar_vsetky[(sumar_vsetky['Zabalené (ks)'] > 0) & (sumar_vsetky['Potvrdene'] == True)].copy()
                 
                 if vybrany_export_odberatel != "Všetci":
                     df_vypocet = df_vypocet[df_vypocet['Odberateľ'] == vybrany_export_odberatel]
