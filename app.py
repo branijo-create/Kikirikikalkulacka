@@ -5,7 +5,7 @@ import io
 from datetime import datetime, timedelta
 import json
 
-st.set_page_config(page_title="Roastery Manager v3.0", page_icon="☕", layout="wide")
+st.set_page_config(page_title="Roastery Manager v3.2", page_icon="☕", layout="wide")
 
 # --- KONFIGURÁCIA Z TVOJHO KÓDU ---
 KAPACITA_ZELENA_BATCH = 5.0
@@ -47,33 +47,6 @@ def get_google_credentials():
     ]
     return Credentials.from_service_account_info(creds_dict, scopes=scopes)
 
-def uloz_do_google_sheets(data):
-    try:
-        import gspread
-        creds = get_google_credentials()
-        client = gspread.authorize(creds)
-        spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
-        
-        sheet1 = spreadsheet.sheet1
-        sheet1.update_acell('A1', json.dumps(data, ensure_ascii=False))
-        cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        sheet1.update_acell('B1', cas_ulozenia)
-        
-        try:
-            log_sheet = spreadsheet.worksheet("Logy")
-        except:
-            log_sheet = spreadsheet.add_worksheet(title="Logy", rows="1000", cols="2")
-            log_sheet.append_row(["Čas uloženia", "Dáta (JSON)"])
-        
-        log_sheet.append_row([cas_ulozenia, json.dumps(data, ensure_ascii=False)])
-        return True
-    except Exception as e:
-        return False
-
-def auto_uloz():
-    # Neviditeľné uloženie na pozadí
-    uloz_do_google_sheets(st.session_state.aktualne_objednavky)
-
 def nacitaj_z_google_sheets():
     try:
         import gspread
@@ -81,14 +54,65 @@ def nacitaj_z_google_sheets():
         client = gspread.authorize(creds)
         sheet = client.open(NAZOV_TABULKY_ZALOHA).sheet1
         
-        val_data = sheet.acell('A1').value
-        val_cas = sheet.acell('B1').value
-        
+        try:
+            # Načíta A1(dáta), B1(čas), C1(názov praženia)
+            hodnoty = sheet.row_values(1)
+            val_data = hodnoty[0] if len(hodnoty) > 0 else None
+            val_cas = hodnoty[1] if len(hodnoty) > 1 else "Neznámy čas"
+            val_nazov = hodnoty[2] if len(hodnoty) > 2 else f"Prazenie_{DNESNY_DATUM}"
+        except:
+            val_data = None
+            val_cas = "Neznámy čas"
+            val_nazov = f"Prazenie_{DNESNY_DATUM}"
+            
         data = json.loads(val_data) if val_data else None
-        cas = val_cas if val_cas else "Neznámy čas"
-        return data, cas
+        return data, val_cas, val_nazov
     except Exception as e:
-        return None, None
+        return None, None, None
+
+def uloz_do_google_sheets(data, nazov_prazenia):
+    try:
+        import gspread
+        creds = get_google_credentials()
+        client = gspread.authorize(creds)
+        spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
+        
+        sheet1 = spreadsheet.sheet1
+        cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        
+        # Uloží aktuálny stav aj s názvom praženia
+        sheet1.update_acell('A1', json.dumps(data, ensure_ascii=False))
+        sheet1.update_acell('B1', cas_ulozenia)
+        sheet1.update_acell('C1', str(nazov_prazenia))
+        
+        # Zapíše log - teraz s 3 stĺpcami (Čas, Názov, Dáta)
+        try:
+            log_sheet = spreadsheet.worksheet("Logy")
+        except:
+            log_sheet = spreadsheet.add_worksheet(title="Logy", rows="1000", cols="3")
+            log_sheet.append_row(["Čas uloženia", "Názov praženia", "Dáta (JSON)"])
+        
+        log_sheet.append_row([cas_ulozenia, str(nazov_prazenia), json.dumps(data, ensure_ascii=False)])
+        return True
+    except Exception as e:
+        return False
+
+def auto_uloz():
+    # Neviditeľné uloženie na pozadí, načíta aktuálny názov z políčka
+    aktualny_nazov = st.session_state.get('nazov_prazenia', f"Prazenie_{DNESNY_DATUM}")
+    uloz_do_google_sheets(st.session_state.aktualne_objednavky, aktualny_nazov)
+
+def nacitaj_logy_z_google_sheets():
+    try:
+        import gspread
+        creds = get_google_credentials()
+        client = gspread.authorize(creds)
+        spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
+        log_sheet = spreadsheet.worksheet("Logy")
+        zaznamy = log_sheet.get_all_values()[1:] 
+        return list(reversed(zaznamy)) 
+    except Exception as e:
+        return []
 
 def uloz_export_pre_evicku(odberatel, txt_obsah):
     try:
@@ -120,25 +144,14 @@ def nacitaj_exporty_pre_evicku():
     except Exception as e:
         return []
 
-def nacitaj_logy_z_google_sheets():
-    try:
-        import gspread
-        creds = get_google_credentials()
-        client = gspread.authorize(creds)
-        spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
-        log_sheet = spreadsheet.worksheet("Logy")
-        zaznamy = log_sheet.get_all_values()[1:] 
-        return list(reversed(zaznamy)) 
-    except Exception as e:
-        return []
-
 # --- AUTO-LOAD PRI ŠTARTE A PREBUDENÍ MOBILU ---
 if 'aktualne_objednavky' not in st.session_state:
-    zaloha, cas = nacitaj_z_google_sheets()
-    if zaloha:
-        st.session_state.aktualne_objednavky = zaloha
-    else:
-        st.session_state.aktualne_objednavky = []
+    zaloha, cas, n_prazenia = nacitaj_z_google_sheets()
+    st.session_state.aktualne_objednavky = zaloha if zaloha else []
+    st.session_state.pociatocny_nazov = n_prazenia if n_prazenia else f"Prazenie_{DNESNY_DATUM}"
+
+if 'nazov_prazenia' not in st.session_state:
+    st.session_state.nazov_prazenia = st.session_state.get('pociatocny_nazov', f"Prazenie_{DNESNY_DATUM}")
 
 if 'form_key' not in st.session_state:
     st.session_state.form_key = 0
@@ -160,10 +173,18 @@ with st.sidebar:
         if st.session_state.get('logy_data_zoznam'):
             logy = st.session_state.logy_data_zoznam
             if logy:
-                moznosti = [f"{riadok[0]}" for riadok in logy]
+                moznosti = []
+                for r in logy:
+                    # Ak je log nový (má 3 stĺpce - Čas, Názov, Json)
+                    if len(r) >= 3:
+                        moznosti.append(f"{r[0]} | {r[1]}")
+                    else:
+                        moznosti.append(f"{r[0]}")
+                
                 vybrany_cas = st.selectbox("Vyber čas na obnovenie:", moznosti)
                 if st.button("⚠️ OBNOVIŤ TENTO ČAS", type="primary", use_container_width=True):
-                    vybrany_json = next(riadok[1] for riadok in logy if riadok[0] == vybrany_cas)
+                    idx = moznosti.index(vybrany_cas)
+                    vybrany_json = logy[idx][-1] # Json je vždy na konci
                     try:
                         obnovene_data = json.loads(vybrany_json)
                         st.session_state.aktualne_objednavky = obnovene_data
@@ -194,8 +215,11 @@ with st.sidebar:
                     use_container_width=True
                 )
 
-# --- HLAVNÉ ROZHRANIE - TABS ---
-st.title("☕ Roastery Manager v3.0")
+# --- HLAVNÉ ROZHRANIE ---
+st.title("☕ Roastery Manager v3.2")
+
+# Políčko pre názov je ihneď prepojené s auto_uloz, zmena sa pamätá na Disku
+st.text_input("📅 Názov aktuálneho praženia (Tento názov si systém pamätá a označuje ním Logy aj sťahované súbory):", key="nazov_prazenia", on_change=auto_uloz)
 
 tab1, tab2 = st.tabs(["🛒 1. Objednávky a Praženie", "📦 2. Kontrola balenia a Export"])
 
@@ -203,6 +227,66 @@ tab1, tab2 = st.tabs(["🛒 1. Objednávky a Praženie", "📦 2. Kontrola balen
 # TAB 1: OBJEDNÁVKY A PRAŽENIE
 # ========================================================
 with tab1:
+    # --- KONTROLA STAVU (ZOBRAZENIE NAHĽADU) ---
+    if 'info_cloud' not in st.session_state:
+        zaloha, cas, _ = nacitaj_z_google_sheets()
+        if not zaloha:
+            st.session_state.info_cloud = "☁️ **Stav na Google Disku:** Prázdny stôl (žiadne aktívne objednávky)."
+            st.session_state.zaloha_data = []
+        else:
+            aktivne = [o for o in zaloha if not o.get('❌ Zmazať', False)]
+            st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** {len(aktivne)} aktívnych položiek | 🕒 Posledná úprava: **{cas}**"
+            st.session_state.zaloha_data = aktivne
+
+    st.info(st.session_state.info_cloud)
+
+    if st.session_state.get('zaloha_data'):
+        with st.expander("👀 Klikni sem pre zobrazenie toho, čo je aktuálne uložené na Disku"):
+            df_ukazka = pd.DataFrame(st.session_state.zaloha_data)
+            if not df_ukazka.empty:
+                st.dataframe(df_ukazka[['Odberateľ', 'Káva', 'Gramáž', 'Kusy']], use_container_width=True, hide_index=True)
+
+    # VRÁTENÉ TLAČIDLÁ PRE RUČNÚ SYNCHRONIZÁCIU
+    st.subheader("☁️ Spoločná zdieľaná pamäť (Braňo / Majo)")
+    col_load, col_save = st.columns(2)
+
+    with col_load:
+        if st.button("🔄 Načítať spoločnú prácu z Google disku", type="primary", use_container_width=True):
+            zaloha, cas_poslednej_upravy, n_prazenia = nacitaj_z_google_sheets()
+            if zaloha:
+                st.session_state.aktualne_objednavky = zaloha
+                if n_prazenia: st.session_state.nazov_prazenia = n_prazenia
+                aktivne = [o for o in zaloha if not o.get('❌ Zmazať', False)]
+                st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** {len(aktivne)} aktívnych položiek | 🕒 Posledná úprava: **{cas_poslednej_upravy}**"
+                st.session_state.zaloha_data = aktivne
+                st.success(f"✅ Dáta úspešne načítané!")
+                st.rerun() 
+            else:
+                st.session_state.info_cloud = "☁️ **Stav na Google Disku:** Prázdny stôl (žiadne aktívne objednávky)."
+                st.session_state.zaloha_data = []
+                st.warning("Záloha na Google Drive je zatiaľ prázdna.")
+                st.rerun()
+
+    with col_save:
+        if st.button("💾 Uložiť aktuálny zoznam pre ostatných", type="primary", use_container_width=True):
+            if st.session_state.aktualne_objednavky:
+                auto_uloz()
+                cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+                aktivne = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
+                st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** {len(aktivne)} aktívnych položiek | 🕒 Posledná úprava: **{cas_ulozenia}**"
+                st.session_state.zaloha_data = aktivne
+                st.success("✅ Tvoj aktuálny zoznam bol bezpečne uložený do spoločnej pamäte!")
+                st.rerun()
+            else:
+                if uloz_do_google_sheets([], st.session_state.nazov_prazenia):
+                    cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+                    st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** Prázdny stôl | 🕒 Posledná úprava: **{cas_ulozenia}**"
+                    st.session_state.zaloha_data = []
+                    st.success("✅ Spoločná pamäť bola úspešne vymazaná (pripravené na nový týždeň).")
+                    st.rerun()
+
+    st.divider()
+
     st.subheader("📁 Import z Excelu")
     nahraty_subor = st.file_uploader("Nahraj .xlsx súbor", type=["xlsx"])
     if nahraty_subor is not None:
@@ -288,7 +372,7 @@ with tab1:
                     auto_uloz() # AUTO-SAVE PRI ZMAZANÍ
                     st.rerun()
             with col_del2:
-                if st.button("💣 Vymazať všetko"):
+                if st.button("💣 Vymazať všetko", type="primary"):
                     st.session_state.aktualne_objednavky = []
                     auto_uloz()
                     st.rerun()
@@ -348,8 +432,10 @@ with tab1:
                     if not df_blendov.empty:
                         df_blendov.to_excel(writer, index=False, sheet_name='Plan_Blendov')
                 
+                # Názov súboru zoberie z premennej
+                nazov_suboru = f"KIKIRIKI_plan_{st.session_state.nazov_prazenia}.xlsx"
                 st.download_button(
-                    label="💾 Stiahnuť 3-hárok", data=buffer.getvalue(), file_name=f"KIKIRIKI_plan_{DNESNY_DATUM}.xlsx",
+                    label="💾 Stiahnuť 3-hárok", data=buffer.getvalue(), file_name=nazov_suboru,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary"
                 )
 
@@ -357,20 +443,6 @@ with tab1:
 # TAB 2: KONTROLA BALENIA A EXPORT
 # ========================================================
 with tab2:
-    st.subheader("☁️ Záchranná brzda pre synchronizáciu")
-    col_l, col_s = st.columns(2)
-    with col_l:
-        if st.button("🔄 Vynútiť načítanie z Google Disku (Ak si na inom PC)"):
-            zaloha, _ = nacitaj_z_google_sheets()
-            if zaloha: st.session_state.aktualne_objednavky = zaloha
-            st.rerun()
-    with col_s:
-        if st.button("💾 Vynútiť manuálne uloženie do Cloudu"):
-            auto_uloz()
-            st.toast("Uložené!", icon="✅")
-
-    st.divider()
-
     if st.session_state.aktualne_objednavky:
         aktivne_balenie = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
         
@@ -383,9 +455,37 @@ with tab2:
             for g in [220, 500, 1000]:
                 if g not in sum_pivot.columns: sum_pivot[g] = 0
             sum_pivot['Spolu etikiet'] = sum_pivot.sum(axis=1)
-            # Reorder
+            
+            # Pridanie TOTÁLNEHO SÚČTU na spodok
+            sum_pivot.loc['🔥 SPOLU SÁČKOV'] = sum_pivot.sum(numeric_only=True)
+            
             sum_pivot = sum_pivot[['Spolu etikiet', 220, 500, 1000]].reset_index()
             st.dataframe(sum_pivot, use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # --- VRÁTENÝ SKLAD EXPANDER ---
+        with st.expander("➕ Zvýšila ti káva pri pražení? Pridať položku do tabuľky (napr. pre Sklad)"):
+            col_ex1, col_ex2, col_ex3 = st.columns(3)
+            with col_ex1: ex_odberatel = st.text_input("Odberateľ:", value="Sklad", key="ex_odb")
+            with col_ex2: ex_kava = st.selectbox("Káva:", list(kavy_recepty.keys()), key="ex_kava")
+            with col_ex3:
+                ex_gramaz = st.selectbox("Gramáž:", gramaze_list, key="ex_gramaz")
+                ex_kusy = st.number_input("Kusy:", min_value=1, step=1, key="ex_kusy")
+            
+            if st.button("Pridať položku navyše do zoznamu", type="secondary"):
+                st.session_state.aktualne_objednavky.append({
+                    "Odberateľ": ex_odberatel,
+                    "Káva": ex_kava,
+                    "Gramáž": ex_gramaz,
+                    "Kusy": ex_kusy,
+                    "Zabalené (ks)": ex_kusy,
+                    "Potvrdene": True,
+                    "❌ Zmazať": False
+                })
+                auto_uloz() # ULOŽÍ SA IHNEĎ DO CLOUDU
+                st.success(f"Pridané {ex_kusy}ks {ex_kava} ({ex_gramaz}g) pre {ex_odberatel}.")
+                st.rerun()
 
         st.divider()
 
@@ -398,7 +498,6 @@ with tab2:
         with col_f1: filter_odb = st.selectbox("Filter: Odberateľ", zoznam_odberatelov)
         with col_f2: filter_kava = st.selectbox("Filter: Káva", zoznam_kav)
 
-        # Callback pre automaticke ukladanie pri kliknuti na checkbox
         def zmena_balenia_callback(index_v_liste):
             novy_pocet = st.session_state[f"pocet_{index_v_liste}"]
             potvrdene = st.session_state[f"chk_{index_v_liste}"]
@@ -406,7 +505,7 @@ with tab2:
             st.session_state.aktualne_objednavky[index_v_liste]['Potvrdene'] = potvrdene
             auto_uloz() # AUTOMATICKY ULOŽI PRI KLIKNUTI
 
-        st.info("Karta zasvieti nazeleno až vtedy, keď fyzicky skontroluješ balenie a odškrtneš ho. Všetko sa ukladá okamžite a samo.")
+        st.info("Karta zasvieti nazeleno až vtedy, keď odškrtneš balenie. Všetko sa okamžite a samo ukladá do Google Disku (aj do logov).")
 
         for i, obj in enumerate(st.session_state.aktualne_objednavky):
             if obj.get('❌ Zmazať', False): continue
@@ -429,7 +528,6 @@ with tab2:
                         
                     st.write(f"*Objednané:* **{objednane} ks**")
                     
-                    # Interaktívne prvky s auto-save callbackom
                     st.number_input("Skutočne zabalené:", min_value=0, value=aktualne_zabalene, step=1, key=f"pocet_{i}", on_change=zmena_balenia_callback, args=(i,))
                     st.checkbox("Potvrdiť balenie", value=potvrdene, key=f"chk_{i}", on_change=zmena_balenia_callback, args=(i,))
                     st.markdown("---") 
@@ -485,16 +583,20 @@ with tab2:
                     
                     raw_txt_string = "\n".join(lines)
                     txt_data = raw_txt_string.encode('windows-1250', errors='replace')
+                    
                     meno_do_suboru = "Vsetci" if vybrany_export_odberatel == "Všetci" else vybrany_export_odberatel.replace(" ", "_")
+                    nazov_excelu = f"Kikiriki_Prehlad_Evicka_{meno_do_suboru}_{st.session_state.nazov_prazenia}.xlsx"
+                    nazov_txt = f"Kikiriki_Import_Omega_{meno_do_suboru}_{st.session_state.nazov_prazenia}.txt"
                     
                     col_dl1, col_dl2 = st.columns(2)
                     with col_dl1:
-                        st.download_button("📊 Stiahnuť Excel pre Evičku (lokálne)", data=excel_data, file_name=f"Kikiriki_Prehlad_Evicka_{meno_do_suboru}_{DNESNY_DATUM}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                        st.download_button("📊 Stiahnuť Excel pre Evičku (lokálne)", data=excel_data, file_name=nazov_excelu, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
                     with col_dl2:
                         st.download_button(
                             label="⚙️ Stiahnuť TXT pre Kros + ☁️ Uložiť pre Evičku", 
-                            data=txt_data, file_name=f"Kikiriki_Import_{meno_do_suboru}_{DNESNY_DATUM}.txt", mime="text/plain", 
-                            on_click=uloz_export_pre_evicku, args=(vybrany_export_odberatel, raw_txt_string)
+                            data=txt_data, file_name=nazov_txt, mime="text/plain", 
+                            on_click=uloz_export_pre_evicku, args=(vybrany_export_odberatel, raw_txt_string),
+                            type="primary"
                         )
                 else:
                     st.warning("Pre tohto odberateľa nie sú potvrdené žiadne zabalené kusy.")
