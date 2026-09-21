@@ -5,7 +5,7 @@ import io
 from datetime import datetime, timedelta
 import json
 
-st.set_page_config(page_title="Roastery Manager v3.5", page_icon="☕", layout="wide")
+st.set_page_config(page_title="Roastery Manager v3.6", page_icon="☕", layout="wide")
 
 # --- KONFIGURÁCIA Z TVOJHO KÓDU ---
 KAPACITA_ZELENA_BATCH = 5.0
@@ -140,7 +140,7 @@ def nacitaj_logy_z_google_sheets():
     except Exception as e:
         return []
 
-# --- AUTO-LOAD PRI ŠTARTE A PREBUDENÍ MOBILU ---
+# --- AUTO-LOAD PRI ŠTARTE ---
 if 'aktualne_objednavky' not in st.session_state:
     zaloha, cas, n_prazenia = nacitaj_z_google_sheets()
     st.session_state.aktualne_objednavky = zaloha if zaloha else []
@@ -209,7 +209,7 @@ with st.sidebar:
                 )
 
 # --- HLAVNÉ ROZHRANIE ---
-st.title("☕ Roastery Manager v3.5")
+st.title("☕ Roastery Manager v3.6")
 
 st.text_input("📅 Názov aktuálneho praženia (Tento názov si systém pamätá, neprepisuj ho každý deň):", key="nazov_prazenia", on_change=auto_uloz)
 
@@ -415,7 +415,7 @@ with tab1:
                 
                 df_blendov = pd.DataFrame(finalny_plan_blendov) if finalny_plan_blendov else pd.DataFrame()
                 
-                # Celkový sumár obalov (pre Excel - bez UI filtrov)
+                # Celkový sumár obalov (pre Excel)
                 df_sum_obalov = df_objednavky_export.groupby(['Káva', 'Gramáž'])['Kusy'].sum().reset_index()
                 sum_pivot_ex = df_sum_obalov.pivot(index='Káva', columns='Gramáž', values='Kusy').fillna(0).astype(int)
                 for g in [220, 500, 1000]:
@@ -423,7 +423,7 @@ with tab1:
                 sum_pivot_ex['Spolu etikiet'] = sum_pivot_ex.sum(axis=1)
                 sum_pivot_ex.loc['🔥 SPOLU SÁČKOV'] = sum_pivot_ex.sum(numeric_only=True)
                 sum_pivot_ex = sum_pivot_ex[['Spolu etikiet', 220, 500, 1000]].reset_index()
-                sum_pivot_ex.rename(columns={'index': 'Káva'}, inplace=True) # Názov stĺpca pre Excel
+                sum_pivot_ex.rename(columns={'index': 'Káva', 220: '220g', 500: '500g', 1000: '1000g'}, inplace=True) 
 
                 # --- EXCEL PROFI FORMÁTOVANIE ---
                 buffer = io.BytesIO()
@@ -435,27 +435,22 @@ with tab1:
                         max_row, max_col = df.shape
                         if max_row == 0: return
 
-                        # Zapnutie AutoFiltra v Exceli pre všetky stĺpce
                         worksheet.autofilter(0, 0, max_row, max_col - 1)
                         
-                        # Hlavička (Modrá)
                         header_format = workbook.add_format({'bold': True, 'bg_color': '#4F81BD', 'font_color': 'white', 'border': 1})
                         for col_num, value in enumerate(df.columns):
                             worksheet.write(0, col_num, str(value), header_format)
-                            # Automatická šírka stĺpcov podľa najdlhšieho textu
                             max_len = max(df[df.columns[col_num]].astype(str).map(len).max(), len(str(value))) + 2
                             worksheet.set_column(col_num, col_num, max_len)
                             
-                        # Príprava štýlov pre riadky
                         format_z1 = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1})
                         format_z2 = workbook.add_format({'bg_color': '#F2F2F2', 'border': 1}) 
-                        format_total = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1}) # Tmavý bold pre Súčet!
+                        format_total = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1}) 
                         
-                        # Ak je to tabuľka Blendov, farbíme celé bloky rovnakej kávy jednou farbou
                         if group_by_col and group_by_col in df.columns:
                             group_col_idx = list(df.columns).index(group_by_col)
                             format_b1 = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1})
-                            format_b2 = workbook.add_format({'bg_color': '#DCE6F1', 'border': 1}) # Bledomodrá
+                            format_b2 = workbook.add_format({'bg_color': '#DCE6F1', 'border': 1}) 
                             use_f1 = True
                             current_val = None
                             for r_idx in range(max_row):
@@ -475,7 +470,6 @@ with tab1:
                                         if isinstance(cell_val, (int, float)): worksheet.write_number(r_idx + 1, c_idx, cell_val, fmt)
                                         else: worksheet.write(r_idx + 1, c_idx, str(cell_val), fmt)
                         else:
-                            # Klasické pásikavé riadky a BOLD súčet pre ostatné tabuľky
                             for r_idx in range(max_row):
                                 is_total = str(df.iloc[r_idx, 0]).startswith('🔥')
                                 fmt = format_total if is_total else (format_z1 if r_idx % 2 == 0 else format_z2)
@@ -505,7 +499,8 @@ with tab2:
     if st.session_state.aktualne_objednavky:
         aktivne_balenie = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
         
-        # --- ROZBALENIE FILTROV PRE BALENIE A SKLAD ---
+        # --- ROZBALENIE FILTROV PRE BALENIE ---
+        # Tieto filtre ovplyvnia všetko pod nimi (čísla, tabuľku aj odškrtávanie)
         st.markdown("### 📱 Filtre pre Sklad a Balenie")
         col_f1, col_f2 = st.columns(2)
         zoznam_odberatelov = ["Všetci"] + sorted(list(set([o['Odberateľ'] for o in aktivne_balenie])))
@@ -514,10 +509,10 @@ with tab2:
         with col_f1: filter_odb = st.selectbox("Filtrovať Odberateľa:", zoznam_odberatelov)
         with col_f2: filter_kava = st.selectbox("Filtrovať Kávu:", zoznam_kav)
 
-        # Tabuľky aj texty pod týmto bodom reagujú na výber z roletiek vyššie!
+        # Vyfiltrujeme data
         df_filtered = pd.DataFrame([o for o in aktivne_balenie if (filter_odb == "Všetci" or o['Odberateľ'] == filter_odb) and (filter_kava == "Všetky" or o['Káva'] == filter_kava)])
 
-        # --- SUMÁR OBALOV (OBROVSKÝ BOLD TEXT + TABUĽKA) ---
+        # --- SUMÁR OBALOV (OBROVSKÝ BOLD TEXT + STATICKÁ TABUĽKA) ---
         if not df_filtered.empty:
             total_220 = df_filtered[df_filtered['Gramáž']==220]['Kusy'].sum() if 220 in df_filtered['Gramáž'].values else 0
             total_500 = df_filtered[df_filtered['Gramáž']==500]['Kusy'].sum() if 500 in df_filtered['Gramáž'].values else 0
@@ -535,16 +530,13 @@ with tab2:
             
             sum_pivot.loc['🔥 SPOLU SÁČKOV'] = sum_pivot.sum(numeric_only=True)
             sum_pivot = sum_pivot[['Spolu etikiet', 220, 500, 1000]].reset_index()
-            sum_pivot.rename(columns={'index': 'Káva'}, inplace=True)
             
-            # Formátovanie na uzamknutie zoraďovania a Boldovanie súčtu priamo v apke
-            def style_total_row(row):
-                if str(row['Káva']).startswith('🔥'):
-                    return ['font-weight: bold; background-color: #e6f2ff'] * len(row)
-                return [''] * len(row)
-
-            # use_container_width=False zabezpečí, že stĺpce nebudú zbytočne roztiahnuté cez celú obrazovku
-            st.dataframe(sum_pivot.style.apply(style_total_row, axis=1), use_container_width=False, hide_index=True)
+            # Premenovanie stĺpcov pre krajšie zobrazenie (220.0 sa zmení na 220g)
+            sum_pivot.rename(columns={'index': 'Káva', 220: '220g', 500: '500g', 1000: '1000g'}, inplace=True)
+            
+            # POUŽITIE STATICKEJ TABUĽKY (st.table namiesto st.dataframe)
+            # Týmto sa zabráni klikaniu, orezaniu riadku a zoraďovaniu. Súčet ostane zafixovaný dole.
+            st.table(sum_pivot)
         else:
             st.warning("Pre tento filter neexistujú žiadne sáčky na balenie.")
 
