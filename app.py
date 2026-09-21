@@ -5,7 +5,7 @@ import io
 from datetime import datetime, timedelta
 import json
 
-st.set_page_config(page_title="Roastery Manager v3.3", page_icon="☕", layout="wide")
+st.set_page_config(page_title="Roastery Manager v3.4", page_icon="☕", layout="wide")
 
 # --- KONFIGURÁCIA Z TVOJHO KÓDU ---
 KAPACITA_ZELENA_BATCH = 5.0
@@ -55,7 +55,6 @@ def nacitaj_z_google_sheets():
         sheet = client.open(NAZOV_TABULKY_ZALOHA).sheet1
         
         try:
-            # Načíta A1(dáta), B1(čas), C1(názov praženia)
             hodnoty = sheet.row_values(1)
             val_data = hodnoty[0] if len(hodnoty) > 0 else None
             val_cas = hodnoty[1] if len(hodnoty) > 1 else "Neznámy čas"
@@ -99,18 +98,6 @@ def auto_uloz():
     aktualny_nazov = st.session_state.get('nazov_prazenia', f"Prazenie_{DNESNY_DATUM}")
     uloz_do_google_sheets(st.session_state.aktualne_objednavky, aktualny_nazov)
 
-def nacitaj_logy_z_google_sheets():
-    try:
-        import gspread
-        creds = get_google_credentials()
-        client = gspread.authorize(creds)
-        spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
-        log_sheet = spreadsheet.worksheet("Logy")
-        zaznamy = log_sheet.get_all_values()[1:] 
-        return list(reversed(zaznamy)) 
-    except Exception as e:
-        return []
-
 def uloz_export_pre_evicku(odberatel, txt_obsah):
     try:
         import gspread
@@ -141,11 +128,22 @@ def nacitaj_exporty_pre_evicku():
     except Exception as e:
         return []
 
+def nacitaj_logy_z_google_sheets():
+    try:
+        import gspread
+        creds = get_google_credentials()
+        client = gspread.authorize(creds)
+        spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
+        log_sheet = spreadsheet.worksheet("Logy")
+        zaznamy = log_sheet.get_all_values()[1:] 
+        return list(reversed(zaznamy)) 
+    except Exception as e:
+        return []
+
 # --- AUTO-LOAD PRI ŠTARTE A PREBUDENÍ MOBILU ---
 if 'aktualne_objednavky' not in st.session_state:
     zaloha, cas, n_prazenia = nacitaj_z_google_sheets()
     st.session_state.aktualne_objednavky = zaloha if zaloha else []
-    # Ak cloud má už uložený názov, natiahneme ten. Ak je prázdny, dáme dnešný dátum.
     st.session_state.pociatocny_nazov = n_prazenia if n_prazenia else f"Prazenie_{DNESNY_DATUM}"
 
 if 'nazov_prazenia' not in st.session_state:
@@ -211,7 +209,7 @@ with st.sidebar:
                 )
 
 # --- HLAVNÉ ROZHRANIE ---
-st.title("☕ Roastery Manager v3.3")
+st.title("☕ Roastery Manager v3.4")
 
 st.text_input("📅 Názov aktuálneho praženia (Nemusíš prepisovať každý deň, drží sa to z Disku):", key="nazov_prazenia", on_change=auto_uloz)
 
@@ -299,7 +297,7 @@ with tab1:
                         "Potvrdene": potvrdene_hist,
                         "❌ Zmazať": False
                     })
-                auto_uloz() # AUTOMATICKÉ ULOŽENIE
+                auto_uloz()
                 st.success("Dáta importované a uložené do cloudu!")
         except Exception as e:
             st.error("Chyba Excelu.")
@@ -324,7 +322,7 @@ with tab1:
             if kusy_220 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 220, "Kusy": kusy_220, "Zabalené (ks)": kusy_220, "Potvrdene": False, "❌ Zmazať": False})
             if kusy_500 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 500, "Kusy": kusy_500, "Zabalené (ks)": kusy_500, "Potvrdene": False, "❌ Zmazať": False})
             if kusy_1000 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 1000, "Kusy": kusy_1000, "Zabalené (ks)": kusy_1000, "Potvrdene": False, "❌ Zmazať": False})
-            auto_uloz() # AUTOMATICKÉ ULOŽENIE
+            auto_uloz()
             vynuluj_policka()
             st.rerun()
     else:
@@ -339,7 +337,7 @@ with tab1:
             for k, v in inputs_kavy.items():
                 if v > 0:
                     st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": k, "Gramáž": gramaz, "Kusy": v, "Zabalené (ks)": v, "Potvrdene": False, "❌ Zmazať": False})
-            auto_uloz() # AUTOMATICKÉ ULOŽENIE
+            auto_uloz()
             vynuluj_policka()
             st.rerun()
 
@@ -355,13 +353,13 @@ with tab1:
             novy_stav = upravene_df.to_dict('records')
             if novy_stav != st.session_state.aktualne_objednavky:
                 st.session_state.aktualne_objednavky = novy_stav
-                auto_uloz() # AUTO-SAVE PRI ZMENE V TABUĽKE
+                auto_uloz()
 
             col_del1, col_del2 = st.columns(2)
             with col_del1:
                 if st.button("🗑️ Odstrániť zaškrtnuté", type="primary"):
                     st.session_state.aktualne_objednavky = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
-                    auto_uloz() # AUTO-SAVE PRI ZMAZANÍ
+                    auto_uloz()
                     st.rerun()
             with col_del2:
                 if st.button("💣 Vymazať všetko", type="primary"):
@@ -426,17 +424,68 @@ with tab1:
                 sum_pivot_ex.loc['🔥 SPOLU SÁČKOV'] = sum_pivot_ex.sum(numeric_only=True)
                 sum_pivot_ex = sum_pivot_ex[['Spolu etikiet', 220, 500, 1000]].reset_index()
 
+                # --- EXCEL FORMATOVANIE PRE 3-HAROK ---
                 buffer = io.BytesIO()
-                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    df_plan.to_excel(writer, index=False, sheet_name='Plan_Prazenia')
-                    df_objednavky_export.drop(columns=['❌ Zmazať'], errors='ignore').to_excel(writer, index=False, sheet_name='Spracovane_Objednavky')
-                    if not df_blendov.empty:
-                        df_blendov.to_excel(writer, index=False, sheet_name='Plan_Blendov')
-                    sum_pivot_ex.to_excel(writer, index=False, sheet_name='Sumar_Obalov')
-                
+                with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                    workbook = writer.book
+                    
+                    def write_styled_sheet(df, sheet_name, group_by_col=None):
+                        worksheet = workbook.add_worksheet(sheet_name)
+                        max_row, max_col = df.shape
+                        if max_row == 0: return
+
+                        # 1. Pridanie AutoFiltra pre všetky stĺpce!
+                        worksheet.autofilter(0, 0, max_row, max_col - 1)
+                        
+                        # 2. Hlavička
+                        header_format = workbook.add_format({'bold': True, 'bg_color': '#4F81BD', 'font_color': 'white', 'border': 1})
+                        for col_num, value in enumerate(df.columns):
+                            worksheet.write(0, col_num, str(value), header_format)
+                            # Automatická šírka stĺpcov
+                            max_len = max(df[df.columns[col_num]].astype(str).map(len).max(), len(str(value))) + 2
+                            worksheet.set_column(col_num, col_num, max_len)
+                            
+                        # 3. Zápis riadkov s podfarbením
+                        if group_by_col and group_by_col in df.columns:
+                            group_col_idx = list(df.columns).index(group_by_col)
+                            format1 = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1})
+                            format2 = workbook.add_format({'bg_color': '#DCE6F1', 'border': 1}) # Bledomodrá
+                            use_f1 = True
+                            current_val = None
+                            for r_idx in range(max_row):
+                                val = df.iloc[r_idx, group_col_idx]
+                                if current_val is None: current_val = val
+                                elif val != current_val:
+                                    current_val = val
+                                    use_f1 = not use_f1
+                                fmt = format1 if use_f1 else format2
+                                for c_idx in range(max_col):
+                                    cell_val = df.iloc[r_idx, c_idx]
+                                    if pd.isna(cell_val): worksheet.write(r_idx + 1, c_idx, "", fmt)
+                                    else:
+                                        if isinstance(cell_val, (int, float)): worksheet.write_number(r_idx + 1, c_idx, cell_val, fmt)
+                                        else: worksheet.write(r_idx + 1, c_idx, str(cell_val), fmt)
+                        else:
+                            format_z1 = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1})
+                            format_z2 = workbook.add_format({'bg_color': '#F2F2F2', 'border': 1}) # Zebra sivá
+                            for r_idx in range(max_row):
+                                fmt = format_z1 if r_idx % 2 == 0 else format_z2
+                                for c_idx in range(max_col):
+                                    cell_val = df.iloc[r_idx, c_idx]
+                                    if pd.isna(cell_val): worksheet.write(r_idx + 1, c_idx, "", fmt)
+                                    else:
+                                        if isinstance(cell_val, (int, float)): worksheet.write_number(r_idx + 1, c_idx, cell_val, fmt)
+                                        else: worksheet.write(r_idx + 1, c_idx, str(cell_val), fmt)
+
+                    write_styled_sheet(df_plan, 'Plan_Prazenia')
+                    write_styled_sheet(df_objednavky_export.drop(columns=['❌ Zmazať'], errors='ignore'), 'Spracovane_Objednavky')
+                    if not df_blendov.empty: 
+                        write_styled_sheet(df_blendov, 'Plan_Blendov', group_by_col='Názov blendu')
+                    write_styled_sheet(sum_pivot_ex, 'Sumar_Obalov')
+
                 nazov_suboru = f"KIKIRIKI_plan_{st.session_state.nazov_prazenia}.xlsx"
                 st.download_button(
-                    label="💾 Stiahnuť 3-hárok (s pridaným Sumárom Obalov)", data=buffer.getvalue(), file_name=nazov_suboru,
+                    label="💾 Stiahnuť profi 3-hárok (s Filtrami a Farbami)", data=buffer.getvalue(), file_name=nazov_suboru,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary"
                 )
 
@@ -456,10 +505,9 @@ with tab2:
         with col_f1: filter_odb = st.selectbox("Filtrovať Odberateľa:", zoznam_odberatelov)
         with col_f2: filter_kava = st.selectbox("Filtrovať Kávu:", zoznam_kav)
 
-        # Vyfiltrujeme data podla výberu hore
         df_filtered = pd.DataFrame([o for o in aktivne_balenie if (filter_odb == "Všetci" or o['Odberateľ'] == filter_odb) and (filter_kava == "Všetky" or o['Káva'] == filter_kava)])
 
-        # --- SUMÁR OBALOV (OBROVSKÝ BOLD TEXT + TABUĽKA) ---
+        # --- SUMÁR OBALOV ---
         if not df_filtered.empty:
             total_220 = df_filtered[df_filtered['Gramáž']==220]['Kusy'].sum() if 220 in df_filtered['Gramáž'].values else 0
             total_500 = df_filtered[df_filtered['Gramáž']==500]['Kusy'].sum() if 500 in df_filtered['Gramáž'].values else 0
@@ -467,16 +515,14 @@ with tab2:
             total_all = total_220 + total_500 + total_1000
 
             st.markdown(f"## 🔥 **CELKOVO POTREBUJEŠ: {total_all} sáčkov**")
-            st.markdown(f"**Z toho: 220g: {total_220} ks | 500g: {total_500} ks | 1000g: {total_1000} ks**")
+            st.markdown(f"### **Z toho: 220g: {total_220} ks | 500g: {total_500} ks | 1000g: {total_1000} ks**")
 
-            # Pivot tabulka
             df_sum = df_filtered.groupby(['Káva', 'Gramáž'])['Kusy'].sum().reset_index()
             sum_pivot = df_sum.pivot(index='Káva', columns='Gramáž', values='Kusy').fillna(0).astype(int)
             for g in [220, 500, 1000]:
                 if g not in sum_pivot.columns: sum_pivot[g] = 0
             sum_pivot['Spolu etikiet'] = sum_pivot.sum(axis=1)
             
-            # Pridanie TOTÁLNEHO SÚČTU BOLDOM
             sum_pivot.loc['🔥 SPOLU SÁČKOV'] = sum_pivot.sum(numeric_only=True)
             sum_pivot = sum_pivot[['Spolu etikiet', 220, 500, 1000]].reset_index()
             
@@ -486,7 +532,7 @@ with tab2:
 
         st.divider()
 
-        # --- VRÁTENÝ SKLAD EXPANDER ---
+        # --- SKLAD EXPANDER ---
         with st.expander("➕ Zvýšila ti káva pri pražení? Pridať položku do tabuľky (napr. pre Sklad)"):
             col_ex1, col_ex2, col_ex3 = st.columns(3)
             with col_ex1: ex_odberatel = st.text_input("Odberateľ:", value="Sklad", key="ex_odb")
@@ -505,7 +551,7 @@ with tab2:
                     "Potvrdene": True,
                     "❌ Zmazať": False
                 })
-                auto_uloz() # ULOŽÍ SA IHNEĎ DO CLOUDU
+                auto_uloz()
                 st.success(f"Pridané {ex_kusy}ks {ex_kava} ({ex_gramaz}g) pre {ex_odberatel}.")
                 st.rerun()
 
@@ -519,9 +565,9 @@ with tab2:
             potvrdene = st.session_state[f"chk_{index_v_liste}"]
             st.session_state.aktualne_objednavky[index_v_liste]['Zabalené (ks)'] = novy_pocet
             st.session_state.aktualne_objednavky[index_v_liste]['Potvrdene'] = potvrdene
-            auto_uloz() # AUTOMATICKY ULOŽI PRI KLIKNUTI
+            auto_uloz() 
 
-        st.info("Karta zasvieti nazeleno až vtedy, keď odškrtneš balenie. Všetko sa okamžite a samo ukladá do Google Disku (aj do logov).")
+        st.info("Karta zasvieti nazeleno až vtedy, keď odškrtneš balenie. Všetko sa okamžite a samo ukladá do Google Disku.")
 
         for i, obj in enumerate(st.session_state.aktualne_objednavky):
             if obj.get('❌ Zmazať', False): continue
@@ -584,7 +630,28 @@ with tab2:
                     
                     excel_buffer = io.BytesIO()
                     with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                        df_export.to_excel(writer, index=False, sheet_name='Prehľad pre Evičku')
+                        workbook = writer.book
+                        worksheet = workbook.add_worksheet('Prehľad pre Evičku')
+                        max_row, max_col = df_export.shape
+                        if max_row > 0:
+                            worksheet.autofilter(0, 0, max_row, max_col - 1)
+                            header_format = workbook.add_format({'bold': True, 'bg_color': '#4F81BD', 'font_color': 'white', 'border': 1})
+                            for col_num, value in enumerate(df_export.columns):
+                                worksheet.write(0, col_num, str(value), header_format)
+                                max_len = max(df_export[df_export.columns[col_num]].astype(str).map(len).max(), len(str(value))) + 2
+                                worksheet.set_column(col_num, col_num, max_len)
+                            
+                            format_z1 = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1})
+                            format_z2 = workbook.add_format({'bg_color': '#F2F2F2', 'border': 1}) 
+                            for r_idx in range(max_row):
+                                fmt = format_z1 if r_idx % 2 == 0 else format_z2
+                                for c_idx in range(max_col):
+                                    cell_val = df_export.iloc[r_idx, c_idx]
+                                    if pd.isna(cell_val): worksheet.write(r_idx + 1, c_idx, "", fmt)
+                                    else:
+                                        if isinstance(cell_val, (int, float)): worksheet.write_number(r_idx + 1, c_idx, cell_val, fmt)
+                                        else: worksheet.write(r_idx + 1, c_idx, str(cell_val), fmt)
+
                     excel_data = excel_buffer.getvalue()
 
                     lines = ["R00\tT01"]
@@ -608,7 +675,7 @@ with tab2:
                     
                     col_dl1, col_dl2 = st.columns(2)
                     with col_dl1:
-                        st.download_button("📊 Stiahnuť Excel pre Evičku (lokálne)", data=excel_data, file_name=nazov_excelu, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
+                        st.download_button("📊 Stiahnuť profi Excel pre Evičku", data=excel_data, file_name=nazov_excelu, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
                     with col_dl2:
                         st.download_button(
                             label="⚙️ Stiahnuť TXT pre Kros + ☁️ Uložiť pre Evičku", 
