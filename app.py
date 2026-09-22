@@ -5,7 +5,7 @@ import io
 from datetime import datetime, timedelta
 import json
 
-st.set_page_config(page_title="Roastery Manager v3.6", page_icon="☕", layout="wide")
+st.set_page_config(page_title="Roastery Manager v3.7", page_icon="☕", layout="wide")
 
 # --- KONFIGURÁCIA Z TVOJHO KÓDU ---
 KAPACITA_ZELENA_BATCH = 5.0
@@ -98,6 +98,22 @@ def auto_uloz():
     aktualny_nazov = st.session_state.get('nazov_prazenia', f"Prazenie_{DNESNY_DATUM}")
     uloz_do_google_sheets(st.session_state.aktualne_objednavky, aktualny_nazov)
 
+# --- OPRAVA CHYBY: CALLBACK FUNKCIA NA NAČÍTANIE ---
+def nacitaj_vsetko_z_cloudu_callback():
+    zaloha, cas_poslednej_upravy, n_prazenia = nacitaj_z_google_sheets()
+    if zaloha:
+        st.session_state.aktualne_objednavky = zaloha
+        if n_prazenia:
+            st.session_state.nazov_prazenia = n_prazenia
+        aktivne = [o for o in zaloha if not o.get('❌ Zmazať', False)]
+        st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** {len(aktivne)} aktívnych položiek | 🕒 Posledná úprava: **{cas_poslednej_upravy}**"
+        st.session_state.zaloha_data = aktivne
+        st.session_state.msg_uspech = True
+    else:
+        st.session_state.info_cloud = "☁️ **Stav na Google Disku:** Prázdny stôl (žiadne aktívne objednávky)."
+        st.session_state.zaloha_data = []
+        st.session_state.msg_chyba = True
+
 def uloz_export_pre_evicku(odberatel, txt_obsah):
     try:
         import gspread
@@ -181,6 +197,8 @@ with st.sidebar:
                     try:
                         obnovene_data = json.loads(vybrany_json)
                         st.session_state.aktualne_objednavky = obnovene_data
+                        if len(logy[idx]) >= 3:
+                            st.session_state.nazov_prazenia = logy[idx][1]
                         auto_uloz()
                         st.success("✅ Systém bol úspešne vrátený v čase!")
                         st.rerun()
@@ -209,7 +227,7 @@ with st.sidebar:
                 )
 
 # --- HLAVNÉ ROZHRANIE ---
-st.title("☕ Roastery Manager v3.6")
+st.title("☕ Roastery Manager v3.7")
 
 st.text_input("📅 Názov aktuálneho praženia (Tento názov si systém pamätá, neprepisuj ho každý deň):", key="nazov_prazenia", on_change=auto_uloz)
 
@@ -241,21 +259,12 @@ with tab1:
     col_load, col_save = st.columns(2)
 
     with col_load:
-        if st.button("🔄 Načítať spoločnú prácu z Google disku", type="primary", use_container_width=True):
-            zaloha, cas_poslednej_upravy, n_prazenia = nacitaj_z_google_sheets()
-            if zaloha:
-                st.session_state.aktualne_objednavky = zaloha
-                if n_prazenia: st.session_state.nazov_prazenia = n_prazenia
-                aktivne = [o for o in zaloha if not o.get('❌ Zmazať', False)]
-                st.session_state.info_cloud = f"☁️ **Stav na Google Disku:** {len(aktivne)} aktívnych položiek | 🕒 Posledná úprava: **{cas_poslednej_upravy}**"
-                st.session_state.zaloha_data = aktivne
-                st.success(f"✅ Dáta úspešne načítané!")
-                st.rerun() 
-            else:
-                st.session_state.info_cloud = "☁️ **Stav na Google Disku:** Prázdny stôl (žiadne aktívne objednávky)."
-                st.session_state.zaloha_data = []
-                st.warning("Záloha na Google Drive je zatiaľ prázdna.")
-                st.rerun()
+        # Používame bezpečný callback, ktorý všetko vybaví na pozadí
+        st.button("🔄 Načítať spoločnú prácu z Google disku", type="primary", use_container_width=True, on_click=nacitaj_vsetko_z_cloudu_callback)
+        if st.session_state.pop('msg_uspech', False):
+            st.success("✅ Dáta úspešne načítané!")
+        if st.session_state.pop('msg_chyba', False):
+            st.warning("Záloha na Google Drive je zatiaľ prázdna.")
 
     with col_save:
         if st.button("💾 Uložiť aktuálny zoznam pre ostatných", type="primary", use_container_width=True):
@@ -496,11 +505,21 @@ with tab1:
 # TAB 2: KONTROLA BALENIA A EXPORT
 # ========================================================
 with tab2:
+    st.subheader("☁️ Záchranná brzda pre synchronizáciu")
+    col_l, col_s = st.columns(2)
+    with col_l:
+        st.button("🔄 Znovu načítať dáta z Disku (Napríklad na inom PC)", type="primary", use_container_width=True, on_click=nacitaj_vsetko_z_cloudu_callback)
+    with col_s:
+        if st.button("💾 Uložiť aktuálny stav do Cloudu", type="primary", use_container_width=True):
+            auto_uloz()
+            st.toast("Uložené!", icon="✅")
+
+    st.divider()
+
     if st.session_state.aktualne_objednavky:
         aktivne_balenie = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
         
         # --- ROZBALENIE FILTROV PRE BALENIE ---
-        # Tieto filtre ovplyvnia všetko pod nimi (čísla, tabuľku aj odškrtávanie)
         st.markdown("### 📱 Filtre pre Sklad a Balenie")
         col_f1, col_f2 = st.columns(2)
         zoznam_odberatelov = ["Všetci"] + sorted(list(set([o['Odberateľ'] for o in aktivne_balenie])))
@@ -509,7 +528,6 @@ with tab2:
         with col_f1: filter_odb = st.selectbox("Filtrovať Odberateľa:", zoznam_odberatelov)
         with col_f2: filter_kava = st.selectbox("Filtrovať Kávu:", zoznam_kav)
 
-        # Vyfiltrujeme data
         df_filtered = pd.DataFrame([o for o in aktivne_balenie if (filter_odb == "Všetci" or o['Odberateľ'] == filter_odb) and (filter_kava == "Všetky" or o['Káva'] == filter_kava)])
 
         # --- SUMÁR OBALOV (OBROVSKÝ BOLD TEXT + STATICKÁ TABUĽKA) ---
@@ -531,11 +549,10 @@ with tab2:
             sum_pivot.loc['🔥 SPOLU SÁČKOV'] = sum_pivot.sum(numeric_only=True)
             sum_pivot = sum_pivot[['Spolu etikiet', 220, 500, 1000]].reset_index()
             
-            # Premenovanie stĺpcov pre krajšie zobrazenie (220.0 sa zmení na 220g)
+            # Premenovanie stĺpcov pre krajšie zobrazenie
             sum_pivot.rename(columns={'index': 'Káva', 220: '220g', 500: '500g', 1000: '1000g'}, inplace=True)
             
-            # POUŽITIE STATICKEJ TABUĽKY (st.table namiesto st.dataframe)
-            # Týmto sa zabráni klikaniu, orezaniu riadku a zoraďovaniu. Súčet ostane zafixovaný dole.
+            # Statická tabuľka = nedá sa do nej klikať = súčet je dole napevno
             st.table(sum_pivot)
         else:
             st.warning("Pre tento filter neexistujú žiadne sáčky na balenie.")
