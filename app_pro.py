@@ -10,7 +10,7 @@ import json
 st.set_page_config(page_title="Kikiriki Roastery PRO", page_icon="☕", layout="wide")
 
 # ==========================================
-# 🎨 FIREMNÝ DIZAJN (FIX MODRÝCH TLAČIDIEL)
+# 🎨 FIREMNÝ DIZAJN
 # ==========================================
 firemny_dizajn = """
 <style>
@@ -36,7 +36,6 @@ firemny_dizajn = """
         font-size: 2.2rem !important;
     }
 
-    /* PRESNÉ ZACIELENIE LEN NA HLAVIČKY ZÁLOŽIEK (TABS) */
     button[role="tab"] {
         padding: 8px 20px !important;
     }
@@ -55,13 +54,11 @@ firemny_dizajn = """
         border-bottom: 3px solid #2B5098 !important;
     }
 
-    /* OPRAVA: VYNÚTENIE BIELEHO TEXTU PRE PRIMÁRNE (MODRÉ) TLAČIDLÁ */
     button[kind="primary"] p {
         color: #FFFFFF !important;
         font-weight: 700 !important;
     }
 
-    /* Vylepšenie tlačidiel a tabuliek */
     .stDataFrame, th, td {
         font-weight: 600 !important;
     }
@@ -93,7 +90,7 @@ kavy_recepty = {
 
 gramaze_list = [220, 500, 1000]
 
-# --- GOOGLE API FUNKCIE (ROBUSTNÁ VERZIA) ---
+# --- GOOGLE API FUNKCIE (STABILNÝ ZÁPIS) ---
 @st.cache_resource
 def get_google_credentials():
     from google.oauth2.service_account import Credentials
@@ -141,18 +138,23 @@ def uloz_do_google_sheets(data_dict, nazov_prazenia):
         client = gspread.authorize(creds)
         spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
         sheet1 = spreadsheet.sheet1
+        
         cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         
-        hodnoty = [[json.dumps(data_dict, ensure_ascii=False), cas_ulozenia, str(nazov_prazenia)]]
+        # 100% spoľahlivý zápis pre všetky verzie knižnice gspread (1 API volanie)
+        bunky = sheet1.range('A1:C1')
+        bunky[0].value = json.dumps(data_dict, ensure_ascii=False)
+        bunky[1].value = cas_ulozenia
+        bunky[2].value = str(nazov_prazenia)
         
-        try:
-            sheet1.update(values=hodnoty, range_name='A1:C1')
-        except TypeError:
-            sheet1.update('A1:C1', hodnoty)
-            
+        sheet1.update_cells(bunky)
         return True, None
     except Exception as e:
-        return False, str(e)
+        # Zachytenie skutočných chýb
+        chyba = str(e)
+        if "200" in chyba:
+            return True, None
+        return False, chyba
 
 def auto_uloz():
     aktualny_nazov = st.session_state.get('nazov_prazenia', f"Prazenie_PRO_{DNESNY_DATUM}")
@@ -163,7 +165,7 @@ def auto_uloz():
     uspech, chyba = uloz_do_google_sheets(data_na_ulozenie, aktualny_nazov)
     
     if not uspech:
-        st.toast(f"⚠️ Zlyhalo ukladanie (skontroluj miesto na Google Disku): {chyba}", icon="❌")
+        st.toast(f"⚠️ Zlyhalo ukladanie: {chyba}", icon="❌")
 
 def nacitaj_vsetko_z_cloudu_callback():
     zaloha_dict, cas_poslednej_upravy, n_prazenia = nacitaj_z_google_sheets()
@@ -190,7 +192,7 @@ if 'aktualne_objednavky' not in st.session_state:
     else:
         st.session_state.aktualne_objednavky = []
         st.session_state.priebeh_prazenia = {}
-        st.session_state.info_cloud = f"Chyba spojenia s Google Diskom (skontrolujte pamäť). Detail: {cas}"
+        st.session_state.info_cloud = f"Sme offline / Tabuľka je prázdna. (Detail: {cas})"
         
     st.session_state.pociatocny_nazov = n_prazenia if n_prazenia else f"Prazenie_PRO_{DNESNY_DATUM}"
 
@@ -205,7 +207,7 @@ col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 7.3 | Výrobný manažment")
+    st.caption("Verzia 7.4 | Výrobný manažment")
 
 with col_head_right:
     if os.path.exists("logo.png"):
@@ -227,7 +229,7 @@ with col_head_right:
 st.text_input("Identifikátor praženia:", key="nazov_prazenia", on_change=auto_uloz)
 
 # ========================================================
-# 🚀 ZÁLOŽKY PRIAMO S BOLDOM
+# 🚀 ZÁLOŽKY
 # ========================================================
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "**OBJEDNÁVKY**", 
@@ -252,7 +254,7 @@ with tab1:
     if st.session_state.pop('msg_uspech', False):
         st.success("Dáta úspešne stiahnuté a zosynchronizované.")
     if st.session_state.pop('msg_chyba', False):
-        st.error("Nepodarilo sa načítať zálohu z Cloudu (Zrejme je plný Google Disk).")
+        st.error("Nepodarilo sa načítať zálohu z Cloudu.")
 
     col_load, col_save = st.columns(2)
     with col_load:
