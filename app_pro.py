@@ -3,6 +3,7 @@ import pandas as pd
 import math
 import io
 import os
+import hmac
 from datetime import datetime, timedelta
 import json
 
@@ -82,6 +83,12 @@ DNESNY_DATUM = datetime.now().strftime("%d-%m-%Y")
 
 NAZOV_TABULKY_ZALOHA = "Kikiriki_Zaloha_PRO"
 
+# Ukladanie: stav sa delí na kúsky (limit bunky v Google Sheets je 50 000 znakov)
+NAZOV_LISTU_STAV = "Stav"
+NAZOV_LISTU_HISTORIA = "Historia"
+VELKOST_KUSKU = 40000
+MAX_ZAZNAMOV_HISTORIE = 100
+
 kavy_recepty = {
     "Brazília": {"vypek": STANDARDNY_VYPEK, "recept": {"Brazília Santos": 1.0}},
     "Etiopia Yerg.": {"vypek": STANDARDNY_VYPEK, "recept": {"Etiópia Yirgacheffe": 1.0}},
@@ -158,6 +165,8 @@ def get_pc_sku(rc_sku, gramaz):
 NAZVY_ZELENA = {v: k for k, v in SKU_ZELENA.items()}
 NAZVY_UPRAZENA = {v: k for k, v in SKU_UPRAZENA.items()}
 
+PRAZDNY_STAV = {"objednavky": [], "prazenie": {}, "sklad": {"zelena": {}, "uprazena": {}, "zabalena": {}}}
+
 # --- GOOGLE API FUNKCIE ---
 @st.cache_resource
 def get_google_credentials():
@@ -168,80 +177,127 @@ def get_google_credentials():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     return Credentials.from_service_account_info(creds_dict, scopes=scopes)
 
+def get_client():
+    import gspread
+    return gspread.authorize(get_google_credentials())
+
+def zabezpec_zdielanie(client, spreadsheet):
+    """Odstráni verejný prístup 'ktokoľvek s linkom' a zdieľa tabuľku len s majiteľom."""
+    try:
+        for p in spreadsheet.list_permissions():
+            if p.get("type") == "anyone":
+                client.remove_permission(spreadsheet.id, p["id"])
+    except Exception:
+        pass
+    owner_email = st.secrets.get("owner_email", "")
+    if owner_email:
+        try:
+            uz_zdielane = any(p.get("emailAddress", "").lower() == owner_email.lower() for p in spreadsheet.list_permissions())
+            if not uz_zdielane:
+                spreadsheet.share(owner_email, perm_type="user", role="writer", notify=False)
+        except Exception:
+            pass
+
+def otvor_tabulku(client):
+    import gspread
+    try:
+        spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
+    except gspread.exceptions.SpreadsheetNotFound:
+        spreadsheet = client.create(NAZOV_TABULKY_ZALOHA)
+    return spreadsheet
+
+def ziskaj_list(spreadsheet, nazov, riadky=200, stlpce=5):
+    import gspread
+    try:
+        return spreadsheet.worksheet(nazov)
+    except gspread.exceptions.WorksheetNotFound:
+        return spreadsheet.add_worksheet(title=nazov, rows=riadky, cols=stlpce)
+
+def rozdel_na_kusky(text):
+    return [text[i:i + VELKOST_KUSKU] for i in range(0, len(text), VELKOST_KUSKU)] or [""]
+
 def nacitaj_z_google_sheets():
     try:
         import gspread
-        creds = get_google_credentials()
-        client = gspread.authorize(creds)
-        
-        try: 
-            spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
-        except gspread.exceptions.SpreadsheetNotFound:
-            spreadsheet = client.create(NAZOV_TABULKY_ZALOHA)
-            spreadsheet.share(None, perm_type='anyone', role='writer')
-            
-        sheet = spreadsheet.sheet1
-        hodnoty = sheet.row_values(1)
-        
-        val_data = hodnoty[0] if len(hodnoty) > 0 else None
-        val_cas = hodnoty[1] if len(hodnoty) > 1 else "Neznámy čas"
-        val_nazov = hodnoty[2] if len(hodnoty) > 2 else ""
-        
+        client = get_client()
+        spreadsheet = otvor_tabulku(client)
+        zabezpec_zdielanie(client, spreadsheet)
+
+        try:
+            ws = spreadsheet.worksheet(NAZOV_LISTU_STAV)
+            stlpec = ws.col_values(1)
+            val_cas = stlpec[0] if len(stlpec) > 0 else "Neznámy čas"
+            val_nazov = stlpec[1] if len(stlpec) > 1 else ""
+            pocet = int(stlpec[2]) if len(stlpec) > 2 and stlpec[2].isdigit() else 0
+            val_data = "".join(stlpec[3:3 + pocet])
+        except gspread.exceptions.WorksheetNotFound:
+            # Migrácia zo starého formátu (všetko v Sheet1!A1:C1)
+            hodnoty = spreadsheet.sheet1.row_values(1)
+            val_data = hodnoty[0] if len(hodnoty) > 0 else None
+            val_cas = hodnoty[1] if len(hodnoty) > 1 else "Neznámy čas"
+            val_nazov = hodnoty[2] if len(hodnoty) > 2 else ""
+
         if val_data and val_data.strip():
             data = json.loads(val_data)
         else:
-            data = {"objednavky": [], "prazenie": {}, "sklad": {"zelena": {}, "uprazena": {}, "zabalena": {}}}
-            
-        if isinstance(data, list): 
+            data = json.loads(json.dumps(PRAZDNY_STAV))
+
+        if isinstance(data, list):
             data = {"objednavky": data, "prazenie": {}, "sklad": {"zelena": {}, "uprazena": {}, "zabalena": {}}}
-            
+
         return data, val_cas, val_nazov
     except Exception as e:
         return None, str(e), None
 
-def uloz_do_google_sheets(data_dict, nazov_prazenia):
+def uloz_snapshot_historie(spreadsheet, cas, nazov, kusky):
+    ws_h = ziskaj_list(spreadsheet, NAZOV_LISTU_HISTORIA, riadky=MAX_ZAZNAMOV_HISTORIE + 20, stlpce=max(10, len(kusky) + 3))
+    if ws_h.col_count < len(kusky) + 2:
+        ws_h.resize(cols=len(kusky) + 2)
+    ws_h.append_row([cas, nazov] + kusky, value_input_option="RAW")
+    pocet = len(ws_h.col_values(1))
+    if pocet > MAX_ZAZNAMOV_HISTORIE:
+        ws_h.delete_rows(1, pocet - MAX_ZAZNAMOV_HISTORIE)
+
+def uloz_do_google_sheets(data_dict, nazov_prazenia, historia=False):
     try:
-        import gspread
-        creds = get_google_credentials()
-        client = gspread.authorize(creds)
-        spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
-        sheet1 = spreadsheet.sheet1
-        
+        client = get_client()
+        spreadsheet = otvor_tabulku(client)
+        ws = ziskaj_list(spreadsheet, NAZOV_LISTU_STAV, riadky=200, stlpce=2)
+
         cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        bunky = sheet1.range('A1:C1')
-        bunky[0].value = json.dumps(data_dict, ensure_ascii=False)
-        bunky[1].value = cas_ulozenia
-        bunky[2].value = str(nazov_prazenia)
-        sheet1.update_cells(bunky)
+        kusky = rozdel_na_kusky(json.dumps(data_dict, ensure_ascii=False))
+
+        potrebne_riadky = 3 + len(kusky)
+        if ws.row_count < potrebne_riadky:
+            ws.resize(rows=potrebne_riadky + 50)
+
+        # Najprv dáta, potom hlavička s počtom kúskov (pri páde sa číta stále starý počet)
+        ws.update(range_name=f"A4:A{3 + len(kusky)}", values=[[k] for k in kusky], value_input_option="RAW")
+        ws.update(range_name="A1:A3", values=[[cas_ulozenia], [str(nazov_prazenia)], [str(len(kusky))]], value_input_option="RAW")
+
+        if historia:
+            uloz_snapshot_historie(spreadsheet, cas_ulozenia, str(nazov_prazenia), kusky)
         return True, None
     except Exception as e:
         chyba = str(e)
         if "200" in chyba: return True, None
         return False, chyba
 
-def auto_uloz():
+def auto_uloz(historia=False):
     aktualny_nazov = st.session_state.get('nazov_prazenia', f"Prazenie_PRO_{DNESNY_DATUM}")
     data_na_ulozenie = {
         "objednavky": st.session_state.aktualne_objednavky,
         "prazenie": st.session_state.priebeh_prazenia,
         "sklad": st.session_state.sklad
     }
-    uspech, chyba = uloz_do_google_sheets(data_na_ulozenie, aktualny_nazov)
+    uspech, chyba = uloz_do_google_sheets(data_na_ulozenie, aktualny_nazov, historia=historia)
     if not uspech: st.toast(f"⚠️ Zlyhalo ukladanie: {chyba}", icon="❌")
 
-def vycisti_disk_robota():
-    try:
-        import gspread
-        creds = get_google_credentials()
-        client = gspread.authorize(creds)
-        subory = client.list_spreadsheet_files()
-        zmazane = 0
-        for f in subory:
-            client.del_spreadsheet(f['id'])
-            zmazane += 1
-        return True, zmazane
-    except Exception as e:
-        return False, str(e)
+def over_heslo(zadane):
+    spravne = st.secrets.get("inventura_heslo", "")
+    if not spravne:
+        return None  # heslo nie je nastavené
+    return hmac.compare_digest(str(zadane), str(spravne))
 
 # --- AUTO-LOAD A INICIALIZÁCIA SKLADU ---
 def inicializuj_sklad(nacitany_sklad):
@@ -300,7 +356,7 @@ def vynuluj_policka(): st.session_state.form_key += 1
 col_head_left, col_head_right = st.columns([3, 1])
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 8.6 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 8.7 | Výroba, Sklad & ERP Kódy")
 with col_head_right:
     if os.path.exists("logo.png"): st.image("logo.png", width=110)
     elif os.path.exists("logo.svg"): st.image("logo.svg", width=110)
@@ -328,8 +384,8 @@ with tab1:
             st.rerun()
     with col_save:
         if st.button("Uložiť aktuálny stav do Cloudu", type="primary", use_container_width=True):
-            auto_uloz()
-            st.success("Aktuálny zoznam uložený.")
+            auto_uloz(historia=True)
+            st.success("Aktuálny zoznam uložený (aj do histórie).")
             st.rerun()
 
     st.divider()
@@ -453,10 +509,12 @@ with tab1:
                     st.rerun()
             with col_del2:
                 if st.button("Vyčistiť stôl (Nový víkend)", type="secondary"):
+                    # Pred vyčistením uložiť snapshot do histórie
+                    auto_uloz(historia=True)
                     st.session_state.aktualne_objednavky = []
                     st.session_state.priebeh_prazenia = {} 
                     auto_uloz()
-                    st.success("Stôl bol vyčistený. Fyzický sklad zostal nedotknutý.")
+                    st.success("Stôl bol vyčistený (predošlý stav je v histórii). Fyzický sklad zostal nedotknutý.")
                     st.rerun()
         else:
             st.info("Kniha je čistá, čaká na nové zadania.")
@@ -725,8 +783,11 @@ with tab4:
     st.divider()
     st.markdown("### 🔒 Zabezpečená zóna: Inventúra")
     heslo_inv = st.text_input("Pre úpravu fyzického skladu zadaj heslo:", type="password", key="heslo_inv")
-    
-    if heslo_inv == "kikiriki":
+    vysledok_hesla = over_heslo(heslo_inv) if heslo_inv else False
+
+    if vysledok_hesla is None:
+        st.warning("Heslo pre inventúru nie je nastavené v Secrets (kľúč `inventura_heslo`). Inventúra je zamknutá.")
+    elif vysledok_hesla:
         st.success("Trezor Skladu odomknutý. Úpravou v tabuľke natvrdo prepíšeš evidenčné stavy.")
         tab_inv_g, tab_inv_r, tab_inv_p = st.tabs(["**Zelená káva (Vrecia)**", "**Upražená káva (Dózy)**", "**Zabalená káva (Regál)**"])
         
@@ -739,7 +800,7 @@ with tab4:
             if st.button("⚠️ Potvrdiť inventúru Zelenej kávy", type="primary"):
                 for row in ed_g.to_dict('records'):
                     st.session_state.sklad["zelena"][row["Kód (SKU)"]] = row["Fyzicky_navážené_(kg)"]
-                auto_uloz()
+                auto_uloz(historia=True)
                 st.rerun()
 
         with tab_inv_r:
@@ -751,7 +812,7 @@ with tab4:
             if st.button("⚠️ Potvrdiť inventúru Upraženej kávy (Dóz)", type="primary"):
                 for row in ed_r.to_dict('records'):
                     st.session_state.sklad["uprazena"][row["Kód (SKU)"]] = row["Fyzicky_navážené_(kg)"]
-                auto_uloz()
+                auto_uloz(historia=True)
                 st.rerun()
 
         with tab_inv_p:
@@ -763,7 +824,7 @@ with tab4:
             if st.button("⚠️ Potvrdiť inventúru Zabalených sáčkov", type="primary"):
                 for row in ed_p.to_dict('records'):
                     st.session_state.sklad["zabalena"][row["Kód (SKU)"]] = row["Fyzicky_na_regáli_(ks)"]
-                auto_uloz()
+                auto_uloz(historia=True)
                 st.rerun()
     elif heslo_inv != "":
         st.error("Nesprávne heslo.")
