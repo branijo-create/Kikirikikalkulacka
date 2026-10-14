@@ -602,7 +602,7 @@ def logo_html():
 col_head_left, col_head_lock, col_head_logo = st.columns([14, 1, 2], vertical_alignment="center")
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 9.2 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 9.3 | Výroba, Sklad & ERP Kódy")
 with col_head_lock:
     ikona = "🔓" if st.session_state.get("admin_odomknute", False) else "🔒"
     if st.button(ikona, key="btn_zamok", help="Inventúra, log a obnova"):
@@ -1160,46 +1160,92 @@ with tab5:
     cakajuce_expedicia = [o for o in aktivne if not o.get('Potvrdene')]
     hotove_expedicia = [o for o in aktivne if o.get('Potvrdene')]
     
+    def expeduj(odb, mnozstva):
+        """mnozstva: {index_v_knihe: ks_na_odoslanie}. Plný riadok sa označí ako odoslaný,
+        čiastočný sa rozdelí na odoslanú časť a zvyšok, ktorý ostane otvorený."""
+        sklad_pred = copy.deepcopy(st.session_state.sklad)
+        povodne = st.session_state.aktualne_objednavky
+        nova_kniha, odoslane = [], []
+        for i, o in enumerate(povodne):
+            n = int(mnozstva.get(i, 0))
+            if n <= 0:
+                nova_kniha.append(o); continue
+            kusy = int(o['Kusy'])
+            n = min(n, kusy)
+            pc_sku = get_pc_sku(MENU_KAVY.get(o['Káva']), o['Gramáž'])
+            st.session_state.sklad["zabalena"][pc_sku] = st.session_state.sklad["zabalena"].get(pc_sku, 0) - n
+            if n == kusy:
+                o = dict(o); o['Zabalené (ks)'] = kusy; o['Potvrdene'] = True
+                nova_kniha.append(o)
+            else:
+                odoslana_cast = dict(o); odoslana_cast.update({'Kusy': n, 'Zabalené (ks)': n, 'Potvrdene': True})
+                zvysok = dict(o); zvysok.update({'Kusy': kusy - n, 'Zabalené (ks)': max(0, int(o.get('Zabalené (ks)', 0)) - n)})
+                nova_kniha.extend([odoslana_cast, zvysok])
+            odoslane.append({**o, 'Kusy': n})
+        st.session_state.aktualne_objednavky = nova_kniha
+        st.session_state.pop("tabulka_objednavok", None)
+        st.session_state.pop(f"exp_ed_{odb}", None)
+        celkovo = sum(int(o['Kusy']) for o in povodne if o.get('Odberateľ') == odb and not o.get('Potvrdene') and not o.get('❌ Zmazať') and not o.get('Sudy'))
+        akcia = "Expedícia" if sum(mnozstva.values()) >= celkovo else "Čiastočná expedícia"
+        auto_uloz(akcia=akcia, detail="; ".join(popis_obj(o) for o in odoslane), sklad_pred=sklad_pred)
+
     if not cakajuce_expedicia: st.success("Všetky zákazky sú expedované.")
     else:
         odberatelia = sorted(list(set([o['Odberateľ'] for o in cakajuce_expedicia])))
-        
-        for odb in odberatelia:
-            obj_pre_odb = [o for o in cakajuce_expedicia if o['Odberateľ'] == odb]
-            celkovo_ks = sum([o['Kusy'] for o in obj_pre_odb])
-            
-            mame_vsetky_sacky = True
-            chyba_sacky = ""
-            for o in obj_pre_odb:
-                rc_kod = MENU_KAVY.get(o['Káva'])
-                pc_sku = get_pc_sku(rc_kod, o['Gramáž'])
-                dostupne_v_regali = st.session_state.sklad["zabalena"].get(pc_sku, 0)
-                
-                if dostupne_v_regali < o['Kusy']:
-                    mame_vsetky_sacky = False
-                    chyba_sacky += f" Chýba {o['Kusy'] - dostupne_v_regali}ks {pc_sku}."
+        regal = st.session_state.sklad["zabalena"]
 
-            with st.expander(f"📦 **{odb}** (Zostáva odoslať: {celkovo_ks} ks)"):
-                if mame_vsetky_sacky:
-                    st.success("✅ Všetky sáčky sú pripravené v regáli. Môžeš odoslať balík.")
-                    if st.button(f"Expedovať všetko pre: {odb}", key=f"exp_{odb}", type="primary"):
-                        sklad_pred = copy.deepcopy(st.session_state.sklad)
-                        for i, o in enumerate(st.session_state.aktualne_objednavky):
-                            if o.get('Odberateľ') == odb and not o.get('Potvrdene') and not o.get('❌ Zmazať'):
-                                rc_kod = MENU_KAVY.get(o['Káva'])
-                                pc_sku = get_pc_sku(rc_kod, o['Gramáž'])
-                                st.session_state.sklad["zabalena"][pc_sku] -= o['Kusy']
-                                st.session_state.aktualne_objednavky[i]['Potvrdene'] = True
-                        auto_uloz(akcia="Expedícia", detail="; ".join(popis_obj(o) for o in obj_pre_odb), sklad_pred=sklad_pred)
-                        st.rerun()
+        for odb in odberatelia:
+            indexy = [i for i, o in enumerate(st.session_state.aktualne_objednavky)
+                      if o.get('Odberateľ') == odb and not o.get('Potvrdene') and not o.get('❌ Zmazať') and not o.get('Sudy')]
+            obj_pre_odb = [st.session_state.aktualne_objednavky[i] for i in indexy]
+            celkovo_ks = sum(int(o['Kusy']) for o in obj_pre_odb)
+            zabalene_ks = sum(min(int(o.get('Zabalené (ks)', 0)), int(o['Kusy'])) for o in obj_pre_odb)
+
+            riadky = []
+            for i, o in zip(indexy, obj_pre_odb):
+                pc_sku = get_pc_sku(MENU_KAVY.get(o['Káva']), o['Gramáž'])
+                zab = min(int(o.get('Zabalené (ks)', 0)), int(o['Kusy']))
+                v_regali = int(regal.get(pc_sku, 0))
+                riadky.append({"_idx": i, "Káva": o['Káva'], "Gramáž": o['Gramáž'], "SKU": pc_sku,
+                               "Objednané": int(o['Kusy']), "Zabalené": zab, "V regáli": v_regali,
+                               "Odoslať teraz": max(0, min(zab, v_regali))})
+            df_exp = pd.DataFrame(riadky)
+
+            ikona = "✅" if zabalene_ks >= celkovo_ks else ("🟡" if zabalene_ks > 0 else "⏳")
+            with st.expander(f"{ikona} **{odb}** (zabalené {zabalene_ks} / {celkovo_ks} ks)"):
+                if zabalene_ks >= celkovo_ks:
+                    st.success("Všetko zabalené – môžeš odoslať celý balík.")
+                elif zabalene_ks > 0:
+                    st.warning(f"Zabalená je len časť ({zabalene_ks} z {celkovo_ks} ks). Môžeš odoslať čiastočne, zvyšok ostane otvorený na ďalšie praženie.")
                 else:
-                    st.error(f"⚠️ Zákazník sa nedá odoslať, čakáme na Výrobu!{chyba_sacky}")
-                    
-                st.markdown("**Detail balíka:**")
-                for o in obj_pre_odb:
-                    rc_kod = MENU_KAVY.get(o['Káva'])
-                    pc_sku = get_pc_sku(rc_kod, o['Gramáž'])
-                    st.markdown(f"- {o['Kusy']}x **{o['Káva']}** ({o['Gramáž']}g) -> *Kód: {pc_sku}*")
+                    st.info("Pre tohto zákazníka zatiaľ nie je nič zabalené.")
+
+                st.caption("„Odoslať teraz“ je predvyplnené tým, čo je zabalené. Môžeš ho ručne upraviť.")
+                ed_exp = st.data_editor(
+                    df_exp, hide_index=True, use_container_width=True, key=f"exp_ed_{odb}",
+                    column_order=["Káva", "Gramáž", "SKU", "Objednané", "Zabalené", "V regáli", "Odoslať teraz"],
+                    disabled=["Káva", "Gramáž", "SKU", "Objednané", "Zabalené", "V regáli"],
+                    column_config={"Odoslať teraz": st.column_config.NumberColumn(min_value=0, step=1)})
+
+                mnozstva, chyby = {}, []
+                potreba_sku = {}
+                for r in ed_exp.to_dict("records"):
+                    n = int(r["Odoslať teraz"] or 0)
+                    if n > r["Objednané"]:
+                        chyby.append(f"{r['SKU']}: nedá sa odoslať viac ({n}) než je objednané ({r['Objednané']}).")
+                    potreba_sku[r["SKU"]] = potreba_sku.get(r["SKU"], 0) + n
+                    if n > 0: mnozstva[int(r["_idx"])] = n
+                for sku, n in potreba_sku.items():
+                    if n > int(regal.get(sku, 0)):
+                        chyby.append(f"{sku}: v regáli je len {int(regal.get(sku, 0))} ks, chceš odoslať {n}.")
+
+                spolu = sum(mnozstva.values())
+                for ch in chyby: st.error(ch)
+                popis_btn = f"🚚 Expedovať všetko ({spolu} ks)" if spolu >= celkovo_ks else f"🚚 Expedovať čiastočne ({spolu} z {celkovo_ks} ks)"
+                if st.button(popis_btn, key=f"exp_{odb}", type="primary", disabled=bool(chyby) or spolu == 0):
+                    if not je_duplicitny_klik(f"exp_{odb}", tuple(sorted(mnozstva.items()))):
+                        expeduj(odb, mnozstva)
+                        st.rerun()
 
     if hotove_expedicia:
         st.divider()
