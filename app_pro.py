@@ -5,6 +5,7 @@ import io
 import os
 import hmac
 import copy
+import time
 from datetime import datetime, timedelta
 import json
 
@@ -349,6 +350,13 @@ def diff_objednavok(stare, nove):
         zmeny.append(f"Počet riadkov {len(stare)}→{len(nove)}")
     return zmeny
 
+def je_duplicitny_klik(kluc, hodnota, okno_s=2.0):
+    """True, ak rovnaká akcia s rovnakou hodnotou prišla znova do `okno_s` sekúnd (dvojklik)."""
+    teraz = time.time()
+    posledny = st.session_state.get(f"_klik_{kluc}")
+    st.session_state[f"_klik_{kluc}"] = (hodnota, teraz)
+    return posledny is not None and posledny[0] == hodnota and (teraz - posledny[1]) < okno_s
+
 def popis_obj(o):
     return f"{o.get('Odberateľ','')}: {o.get('Kusy',0)}× {o.get('Káva','')} {o.get('Gramáž','')}g"
 
@@ -494,7 +502,7 @@ def vynuluj_policka(): st.session_state.form_key += 1
 col_head_left, col_head_right = st.columns([3, 1])
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 8.8 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 8.9 | Výroba, Sklad & ERP Kódy")
 with col_head_right:
     if os.path.exists("logo.png"): st.image("logo.png", width=110)
     elif os.path.exists("logo.svg"): st.image("logo.svg", width=110)
@@ -759,7 +767,7 @@ with tab2:
                 
                 with col_input:
                     pridat_davky = st.number_input("Počet práve odpražených dávok:", min_value=1, value=davky_zostava if davky_zostava > 0 else 1, step=1, key=f"davky_{zrno}")
-                    if st.button(f"Potvrdiť {pridat_davky} dávok do Skladu", key=f"btn_praz_{zrno}", type="primary"):
+                    if st.button(f"Potvrdiť {pridat_davky} dávok do Skladu", key=f"btn_praz_{zrno}", type="primary") and not je_duplicitny_klik(f"praz_{zrno}", pridat_davky):
                         sklad_pred = copy.deepcopy(st.session_state.sklad)
                         nova_zelena = pridat_davky * KAPACITA_ZELENA_BATCH
                         nova_uprazena = nova_zelena * (1 - (STANDARDNY_VYPEK / 100.0))
@@ -838,6 +846,37 @@ with tab3:
         st.divider()
 
         st.markdown("#### 📦 Úlohy pre baliča (Sáčkovanie)")
+        msg_bal = st.session_state.pop("msg_balenie", None)
+        if msg_bal: st.info(msg_bal)
+
+        def pridaj_sacky(k, g, pridavam):
+            """Zapíše presne `pridavam` sáčkov. Vráti počet kusov navyše nad otvorené objednávky."""
+            sklad_pred = copy.deepcopy(st.session_state.sklad)
+            zvysok = pridavam
+            for idx_o, obj in enumerate(st.session_state.aktualne_objednavky):
+                if zvysok <= 0: break
+                if obj.get('❌ Zmazať') or obj.get('Sudy') or obj.get('Potvrdene'): continue
+                if obj['Káva'] == k and obj['Gramáž'] == g:
+                    aktualne_v_obj = int(obj.get('Zabalené (ks)', 0))
+                    potreba_v_obj = int(obj['Kusy']) - aktualne_v_obj
+                    if potreba_v_obj > 0:
+                        dam = min(zvysok, potreba_v_obj)
+                        st.session_state.aktualne_objednavky[idx_o]['Zabalené (ks)'] = aktualne_v_obj + dam
+                        zvysok -= dam
+
+            # ZÁPIS DO PEVNÉHO SKLADU
+            vaha_do_sackov = pridavam * g / 1000.0
+            pc_sku = get_pc_sku(MENU_KAVY.get(k), g)
+            st.session_state.sklad["zabalena"][pc_sku] = st.session_state.sklad["zabalena"].get(pc_sku, 0) + pridavam
+            if k in kavy_recepty:
+                for zrno, podiel in kavy_recepty[k]["recept"].items():
+                    zrno_sku = SKU_UPRAZENA.get(zrno)
+                    if zrno_sku: st.session_state.sklad["uprazena"][zrno_sku] -= (vaha_do_sackov * podiel)
+
+            detail = f"{k} {g}g: +{pridavam} ks ({pc_sku})" + (f", z toho {zvysok} ks navyše" if zvysok > 0 else "")
+            auto_uloz(akcia="Balenie", detail=detail, sklad_pred=sklad_pred)
+            return zvysok
+
         kavy_na_balenie = sorted(list(set([v['kava'] for v in plan_balenia.values()])))
         
         for kava in kavy_na_balenie:
@@ -870,38 +909,17 @@ with tab3:
                         else: st.markdown(f"➡️ **{p['gramaz']}g** sáčok - Už vyrobené {p['hotovo']} ks (Chýba dorobiť **{chýba_ks} ks**)")
                     with col2:
                         if chýba_ks > 0:
-                            def pridaj_sacky(k=p['kava'], g=p['gramaz']):
-                                pridavam = st.session_state[f"add_bag_{k}_{g}"]
-                                if pridavam > 0:
-                                    sklad_pred = copy.deepcopy(st.session_state.sklad)
-                                    zvysok_na_rozdelenie = pridavam
-                                    for idx, obj in enumerate(st.session_state.aktualne_objednavky):
-                                        if obj.get('❌ Zmazať') or obj.get('Sudy') or obj.get('Potvrdene'): continue
-                                        if obj['Káva'] == k and obj['Gramáž'] == g:
-                                            aktualne_v_obj = int(obj.get('Zabalené (ks)', 0))
-                                            potreba_v_obj = obj['Kusy'] - aktualne_v_obj
-                                            if potreba_v_obj > 0:
-                                                dam = min(zvysok_na_rozdelenie, potreba_v_obj)
-                                                st.session_state.aktualne_objednavky[idx]['Zabalené (ks)'] = aktualne_v_obj + dam
-                                                zvysok_na_rozdelenie -= dam
-                                            if zvysok_na_rozdelenie == 0: break
-                                    
-                                    # ZÁPIS DO PEVNÉHO SKLADU
-                                    vaha_do_sackov = pridavam * g / 1000.0
-                                    rc_kod_kavy = MENU_KAVY.get(k)
-                                    pc_sku = get_pc_sku(rc_kod_kavy, g)
-                                    
-                                    st.session_state.sklad["zabalena"][pc_sku] = st.session_state.sklad["zabalena"].get(pc_sku, 0) + pridavam
-                                    
-                                    if k in kavy_recepty:
-                                        for zrno, podiel in kavy_recepty[k]["recept"].items():
-                                            zrno_sku = SKU_UPRAZENA.get(zrno)
-                                            if zrno_sku: st.session_state.sklad["uprazena"][zrno_sku] -= (vaha_do_sackov * podiel)
-
-                                    auto_uloz(akcia="Balenie", detail=f"{k} {g}g: +{pridavam} ks ({pc_sku})", sklad_pred=sklad_pred)
-                                st.session_state[f"add_bag_{k}_{g}"] = 0
-                                
-                            st.number_input("Odložiť do regálu (ks):", min_value=0, value=0, step=1, key=f"add_bag_{p['kava']}_{p['gramaz']}", on_change=pridaj_sacky)
+                            with st.form(key=f"form_bag_{p['kava']}_{p['gramaz']}", clear_on_submit=True):
+                                pocet_ks = st.number_input("Odložiť do regálu (ks):", min_value=0, value=0, step=1, key=f"add_bag_{p['kava']}_{p['gramaz']}")
+                                odoslat = st.form_submit_button("✅ Odložiť", use_container_width=True)
+                            if odoslat and pocet_ks > 0:
+                                if je_duplicitny_klik(f"bag_{p['kava']}_{p['gramaz']}", int(pocet_ks)):
+                                    st.warning("Dvojklik zachytený – započítané len raz.")
+                                else:
+                                    navyse = pridaj_sacky(p['kava'], p['gramaz'], int(pocet_ks))
+                                    if navyse > 0:
+                                        st.session_state.msg_balenie = f"{navyse} ks navyše nad objednávky išlo do regálu ako voľný sklad."
+                                    st.rerun()
 
 # ========================================================
 # TAB 4: SKLAD (Trezor a Inventúra)
