@@ -5,7 +5,7 @@ import io
 from datetime import datetime, timedelta
 import json
 
-st.set_page_config(page_title="Roastery Manager PRO v5.1", page_icon="🏭", layout="wide")
+st.set_page_config(page_title="Roastery Manager PRO v5.2", page_icon="🏭", layout="wide")
 
 # --- KONFIGURÁCIA ---
 KAPACITA_ZELENA_BATCH = 5.0
@@ -123,8 +123,8 @@ if 'form_key' not in st.session_state: st.session_state.form_key = 0
 def vynuluj_policka(): st.session_state.form_key += 1
 
 # --- HLAVNÉ ROZHRANIE ---
-st.title("🏭 Roastery Manager PRO (v5.1)")
-st.info("⚠️ Toto je nová paralelná vývojová verzia. Beží na samostatnej databáze a neovplyvňuje Majovu prácu.")
+st.title("🏭 Roastery Manager PRO (v5.2)")
+st.info("⚠️ Toto je nová paralelná vývojová verzia (Rýchle odklikávanie v pražiarni). Beží na samostatnej databáze.")
 
 st.text_input("📅 Názov aktuálneho praženia:", key="nazov_prazenia", on_change=auto_uloz)
 
@@ -134,7 +134,6 @@ tab1, tab2, tab3, tab4 = st.tabs(["📝 1. Kancelária (Objednávky)", "🔥 2. 
 # TAB 1: OBJEDNÁVKY A PLÁN PRAŽENIA
 # ========================================================
 with tab1:
-    # 1. CLOUD SYNC A INFO PANEL (ako v 4.2)
     st.info(st.session_state.info_cloud)
 
     if st.session_state.get('aktualne_objednavky'):
@@ -164,7 +163,6 @@ with tab1:
 
     st.divider()
 
-    # 2. IMPORT EXCELU
     st.markdown("### 📁 Import z Excelu")
     nahraty_subor = st.file_uploader("Nahraj .xlsx súbor", type=["xlsx"])
     if nahraty_subor is not None:
@@ -195,7 +193,6 @@ with tab1:
 
     st.divider()
 
-    # 3. MANUÁLNE ZADÁVANIE
     st.subheader("1. Manuálne pridanie objednávky")
     col1, col2 = st.columns(2)
     with col1:
@@ -245,7 +242,6 @@ with tab1:
 
     st.divider()
 
-    # 4. TABUĽKA OBJEDNÁVOK A VÝPOČET PLÁNU
     col_zoznam, col_vypocet = st.columns([2, 3])
     
     with col_zoznam:
@@ -425,7 +421,7 @@ with tab1:
 # ========================================================
 with tab2:
     st.header("🔥 Zoznam úloh pre Pražičku")
-    st.write("Podľa prijatých objednávok a požiadaviek na sklad potrebuješ upražiť toto zrno. Zapisuj si reálne praženia priamo sem.")
+    st.write("Môžeš upražiť jedným klikom (Automat na 20%), alebo si manuálne zadať presné váhy a anomálie.")
     
     aktivne_objednavky = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True]
     potreba_zelenej_podla_zrna = {}
@@ -447,41 +443,63 @@ with tab2:
                 potreba_uprazenej_podla_zrna[zrno] = potreba_uprazenej_podla_zrna.get(zrno, 0) + (uprazena_kg * podiel)
 
     if not potreba_zelenej_podla_zrna:
-        st.info("Zatiaľ nie je čo pražiť.")
+        st.info("Zatiaľ nie je v pláne nič na praženie.")
     else:
         for zrno, teoreticka_vaha_zelena in potreba_zelenej_podla_zrna.items():
             davky_plan = math.ceil(teoreticka_vaha_zelena / KAPACITA_ZELENA_BATCH)
             zelena_plan = davky_plan * KAPACITA_ZELENA_BATCH
+            uprazena_teoria = zelena_plan * (1 - (STANDARDNY_VYPEK / 100.0))
             
             stav = st.session_state.priebeh_prazenia.get(zrno, {"hotovo": False, "zelena_real": 0.0, "uprazena_real": 0.0})
             
-            with st.expander(f"{'✅' if stav['hotovo'] else '⏳'} Zrnko: {zrno} (Plán: {davky_plan} dávok)", expanded=not stav['hotovo']):
+            with st.expander(f"{'✅ Hotovo' if stav['hotovo'] else '⏳ Čaká:'} Zrnko: {zrno} (Plán: {davky_plan} dávok)", expanded=not stav['hotovo']):
                 col_info, col_input = st.columns([1, 1])
                 
                 with col_info:
                     st.markdown("**Čo hovorí plán:**")
-                    st.write(f"- Minimálne potrebuješ upražiť: **{potreba_uprazenej_podla_zrna[zrno]:.2f} kg**")
-                    st.write(f"- To znamená navážiť zelenú: **{zelena_plan:.1f} kg** ({davky_plan} batchov)")
+                    st.write(f"- Navážiť zelenú: **{zelena_plan:.1f} kg** ({davky_plan} batchov)")
+                    st.write(f"- Očakávaný výstup (pri {STANDARDNY_VYPEK}% výpeku): **{uprazena_teoria:.2f} kg**")
                 
                 with col_input:
-                    st.markdown("**Aká je realita pri stroji?**")
-                    def update_priebeh(z=zrno):
-                        z_real = st.session_state[f"z_real_{z}"]
-                        u_real = st.session_state[f"u_real_{z}"]
-                        hotovo = st.session_state[f"hotovo_{z}"]
-                        st.session_state.priebeh_prazenia[z] = {"zelena_real": z_real, "uprazena_real": u_real, "hotovo": hotovo}
-                        auto_uloz()
-                    
-                    st.number_input("Skutočne nasypaná zelená (kg):", value=float(stav["zelena_real"] or zelena_plan), step=0.1, key=f"z_real_{zrno}", on_change=update_priebeh)
-                    st.number_input("Skutočne vysypaná upražená (kg):", value=float(stav["uprazena_real"]), step=0.1, key=f"u_real_{zrno}", on_change=update_priebeh)
-                    
-                    z_vaha = st.session_state[f"z_real_{zrno}"]
-                    u_vaha = st.session_state[f"u_real_{zrno}"]
-                    if z_vaha > 0 and u_vaha > 0:
-                        vypek = (1 - (u_vaha / z_vaha)) * 100
-                        st.caption(f"Aktuálny výpek na tomto zrne: **{vypek:.1f}%**")
+                    if not stav['hotovo']:
+                        # Voliteľný manuálny režim
+                        manual_mode = st.checkbox("⚖️ Zadať presnú váhu manuálne (anomálie)", key=f"manual_{zrno}")
                         
-                    st.checkbox("✅ Praženie tohto zrna je UKONČENÉ (Nasypané do dózy)", value=stav["hotovo"], key=f"hotovo_{zrno}", on_change=update_priebeh)
+                        if not manual_mode:
+                            st.info(f"Rýchly režim: Zaráta do dózy presne {uprazena_teoria:.1f} kg.")
+                            if st.button(f"✅ Odpražiť {davky_plan} dávok (Automat {STANDARDNY_VYPEK}%)", key=f"auto_{zrno}", type="primary"):
+                                st.session_state.priebeh_prazenia[zrno] = {
+                                    "zelena_real": zelena_plan,
+                                    "uprazena_real": uprazena_teoria,
+                                    "hotovo": True
+                                }
+                                auto_uloz()
+                                st.rerun()
+                        else:
+                            st.markdown("**Manuálne zadanie:**")
+                            def update_priebeh(z=zrno):
+                                z_real = st.session_state[f"z_real_{z}"]
+                                u_real = st.session_state[f"u_real_{z}"]
+                                hotovo = st.session_state[f"hotovo_{z}"]
+                                st.session_state.priebeh_prazenia[z] = {"zelena_real": z_real, "uprazena_real": u_real, "hotovo": hotovo}
+                                auto_uloz()
+                            
+                            st.number_input("Nasypaná zelená (kg):", value=float(stav["zelena_real"] or zelena_plan), step=0.1, key=f"z_real_{zrno}", on_change=update_priebeh)
+                            st.number_input("Vysypaná upražená (kg):", value=float(stav["uprazena_real"]), step=0.1, key=f"u_real_{zrno}", on_change=update_priebeh)
+                            
+                            z_vaha = st.session_state[f"z_real_{zrno}"]
+                            u_vaha = st.session_state[f"u_real_{zrno}"]
+                            if z_vaha > 0 and u_vaha > 0:
+                                vypek = (1 - (u_vaha / z_vaha)) * 100
+                                st.caption(f"Výpek na tomto zrne: **{vypek:.1f}%**")
+                                
+                            st.checkbox("✅ Potvrdiť a poslať do Dózy", value=stav["hotovo"], key=f"hotovo_{zrno}", on_change=update_priebeh)
+                    else:
+                        st.success(f"🎉 **Úspešne odpražené!** \nMinutá zelená: {stav['zelena_real']} kg ➡️ V Dóze pribudlo: {stav['uprazena_real']} kg")
+                        if st.button("🔄 Zrušiť (Vrátiť späť do pražiarne)", key=f"undo_{zrno}"):
+                            st.session_state.priebeh_prazenia[zrno]["hotovo"] = False
+                            auto_uloz()
+                            st.rerun()
 
 # ========================================================
 # TAB 3: BALIAREŇ A DÓZY
