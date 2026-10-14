@@ -63,13 +63,12 @@ firemny_dizajn = """
         font-weight: 600 !important;
     }
     
-    /* VÝRAZNÉ ZVÄČŠENIE NÁZVOV KÁVY V PRAŽIARNI */
     div[data-testid="stExpander"] summary p {
         font-size: 1.15rem !important;
     }
     div[data-testid="stExpander"] summary p strong {
-        font-size: 1.65rem !important; /* O číslo väčšie */
-        color: #1A3568 !important;     /* Tmavšia modrá pre lepší kontrast */
+        font-size: 1.65rem !important;
+        color: #1A3568 !important;
         letter-spacing: 0.5px !important;
     }
 </style>
@@ -226,12 +225,32 @@ if 'nazov_prazenia' not in st.session_state:
 if 'form_key' not in st.session_state: st.session_state.form_key = 0
 def vynuluj_policka(): st.session_state.form_key += 1
 
+# --- GLOBÁLNY VÝPOČET STAVU DÓZ (Pre Balenie aj Sklad) ---
+stav_doz = {}
+if 'priebeh_prazenia' in st.session_state:
+    for zrno, data in st.session_state.priebeh_prazenia.items():
+        if data.get("davky_hotovo", 0) > 0 or data.get("hotovo"):
+            stav_doz[zrno] = stav_doz.get(zrno, 0.0) + data.get("uprazena_real", 0.0)
+            
+if 'aktualne_objednavky' in st.session_state:
+    aktivne_obj_sklad = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True]
+    for o in aktivne_obj_sklad:
+        if o.get("Potvrdene") == True and o.get("Sudy") != True:
+            # Ak je položka potvrdená, odpočítame jej reálnu váhu
+            zabalena_vaha_kg = o.get("Zabalené (ks)", o["Kusy"]) * o["Gramáž"] / 1000.0
+            if o["Káva"] in kavy_recepty:
+                recept = kavy_recepty[o["Káva"]]["recept"]
+                for zrno, podiel in recept.items():
+                    if zrno in stav_doz:
+                        stav_doz[zrno] -= (zabalena_vaha_kg * podiel)
+
+
 # --- HLAVIČKA A LOGO ---
 col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 7.9 | Výrobný manažment")
+    st.caption("Verzia 8.0 | Výrobný manažment")
 
 with col_head_right:
     if os.path.exists("logo.png"):
@@ -570,7 +589,6 @@ with tab2:
             je_hotovo = davky_hotovo >= davky_plan
             ma_navyse = davky_hotovo > davky_plan
             
-            # NOVÁ LOGIKA PRE IKONKY STAVU
             if ma_navyse:
                 stav_text = "✅ ⬆️ Hotovo (Navyše)"
             elif je_hotovo:
@@ -632,42 +650,94 @@ with tab2:
                             st.rerun()
 
 # ========================================================
-# TAB 3: BALENIE
+# TAB 3: BALENIE (Nové vizuálne oddelenie a kontrola skladu)
 # ========================================================
 with tab3:
-    st.markdown("### Priebeh balenia sáčkov")
-    st.caption("Odškrtávaj hotové balenia. Množstvo sa automaticky odpočíta zo Skladu.")
+    st.markdown("### Stanica Balenia")
+    st.caption("Položky sú zoskupené podľa kávy. Rýchle hromadné odklikávanie a stráženie skladu.")
     
-    def zmena_balenia_pro_callback(index_v_liste):
-        st.session_state.aktualne_objednavky[index_v_liste]['Zabalené (ks)'] = st.session_state[f"pro_pocet_{index_v_liste}"]
-        st.session_state.aktualne_objednavky[index_v_liste]['Potvrdene'] = st.session_state[f"pro_chk_{index_v_liste}"]
-        auto_uloz() 
-
     aktivne_balenie = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True and not o.get('Sudy', False)]
+    cakajuce = [o for o in aktivne_balenie if not o.get('Potvrdene')]
+    hotove = [o for o in aktivne_balenie if o.get('Potvrdene')]
     
     if not aktivne_balenie:
         st.info("Žiadne položky na balenie.")
     else:
-        for i, obj in enumerate(st.session_state.aktualne_objednavky):
-            if obj.get('❌ Zmazať') == True or obj.get('Sudy') == True: continue
+        # 1. SUMÁR OBALOV (Prípravovňa)
+        if cakajuce:
+            st.markdown("#### 🏷️ Prípravovňa (Potrebné obaly a etikety pre čakajúce)")
+            df_cak = pd.DataFrame(cakajuce)
+            sum_pivot_tab3 = df_cak.groupby(['Káva', 'Gramáž'])['Kusy'].sum().reset_index()
+            sum_pivot_tab3 = sum_pivot_tab3.pivot(index='Káva', columns='Gramáž', values='Kusy').fillna(0).astype(int)
+            for g in [220, 500, 1000]:
+                if g not in sum_pivot_tab3.columns: sum_pivot_tab3[g] = 0
+            sum_pivot_tab3['Spolu'] = sum_pivot_tab3.sum(axis=1)
+            sum_pivot_tab3 = sum_pivot_tab3[['Spolu', 220, 500, 1000]]
+            st.dataframe(sum_pivot_tab3, use_container_width=True)
+            st.divider()
+
+        # 2. BALENIE PODĽA KÁVY
+        st.markdown("#### 📦 Zoznam na balenie podľa kávy")
+        kavy_na_balenie = sorted(list(set([o['Káva'] for o in cakajuce])))
+        
+        for kava in kavy_na_balenie:
+            obj_pre_kavu = [o for o in cakajuce if o['Káva'] == kava]
+            celkovo_ks = sum([o['Kusy'] for o in obj_pre_kavu])
+            vaha_potrebna = sum([(o['Kusy'] * o['Gramáž'] / 1000.0) for o in obj_pre_kavu])
+            
+            # Kontrola s fyzickým skladom
+            mame_dost = True
+            chyba_text = ""
+            if kava in kavy_recepty:
+                for zrno, podiel in kavy_recepty[kava]["recept"].items():
+                    potreba_zrna = vaha_potrebna * podiel
+                    dostupne = stav_doz.get(zrno, 0.0)
+                    if dostupne < potreba_zrna:
+                        mame_dost = False
+                        chyba_text += f" Chýba {potreba_zrna - dostupne:.2f} kg {zrno}."
+
+            with st.expander(f"☕ **{kava}** (Zostáva zabaliť: {celkovo_ks} ks / {vaha_potrebna:.2f} kg)", expanded=True):
+                if mame_dost:
+                    st.success("✅ Všetka potrebná káva je upražená v Sklade.")
+                else:
+                    st.error(f"⚠️ Pozor, nedá sa zabaliť všetko!{chyba_text}")
                 
-            with st.container():
-                aktualne_zabalene = int(obj.get('Zabalené (ks)', obj['Kusy']))
-                objednane = int(obj['Kusy'])
-                potvrdene = obj.get('Potvrdene') == True
+                col_btn, col_list = st.columns([1, 2])
+                with col_btn:
+                    if st.button(f"Zabaliť všetku {kava} naraz", key=f"bulk_{kava}", type="primary"):
+                        for i, o in enumerate(st.session_state.aktualne_objednavky):
+                            if o.get('Káva') == kava and not o.get('Potvrdene') and not o.get('❌ Zmazať') and not o.get('Sudy'):
+                                st.session_state.aktualne_objednavky[i]['Potvrdene'] = True
+                                st.session_state.aktualne_objednavky[i]['Zabalené (ks)'] = o['Kusy']
+                        auto_uloz()
+                        st.rerun()
                 
-                col_text, col_cisla, col_chk = st.columns([4, 1, 1])
-                with col_text:
-                    if potvrdene and aktualne_zabalene == objednane:
-                        st.markdown(f"**{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g) - {objednane} ks (Hotovo)")
-                    else:
-                        st.markdown(f"**{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g) - Objednané: {objednane} ks")
-                
-                with col_cisla:
-                    st.number_input("Zabalené:", min_value=0, value=aktualne_zabalene, step=1, key=f"pro_pocet_{i}", on_change=zmena_balenia_pro_callback, args=(i,), label_visibility="collapsed")
-                with col_chk:
-                    st.checkbox("Hotovo", value=potvrdene, key=f"pro_chk_{i}", on_change=zmena_balenia_pro_callback, args=(i,))
-            st.markdown("---")
+                with col_list:
+                    st.markdown("**Čakajúce položky (odklikni pre splnenie):**")
+                    for i, o in enumerate(st.session_state.aktualne_objednavky):
+                        if o.get('Káva') == kava and not o.get('Potvrdene') and not o.get('❌ Zmazať') and not o.get('Sudy'):
+                            def set_packed_callback(idx=i):
+                                val = st.session_state[f"chk_{idx}"]
+                                st.session_state.aktualne_objednavky[idx]['Potvrdene'] = val
+                                st.session_state.aktualne_objednavky[idx]['Zabalené (ks)'] = st.session_state.aktualne_objednavky[idx]['Kusy'] if val else 0
+                                auto_uloz()
+                            
+                            st.checkbox(f"{o['Odberateľ']} - **{o['Kusy']} ks** ({o['Gramáž']}g)", key=f"chk_{i}", on_change=set_packed_callback)
+
+        # 3. ARCHÍV ZABALENÝCH
+        if hotove:
+            st.divider()
+            with st.expander("✅ Archív - Už zabalené a vybavené položky", expanded=False):
+                for i, o in enumerate(st.session_state.aktualne_objednavky):
+                    if o.get('Potvrdene') and not o.get('❌ Zmazať') and not o.get('Sudy'):
+                        def revert_packed_callback(idx=i):
+                            val = st.session_state[f"rev_{idx}"]
+                            st.session_state.aktualne_objednavky[idx]['Potvrdene'] = val
+                            if not val:
+                                st.session_state.aktualne_objednavky[idx]['Zabalené (ks)'] = 0
+                            auto_uloz()
+                        
+                        st.checkbox(f"{o['Odberateľ']} | {o['Káva']} ({o['Gramáž']}g) - {o['Kusy']} ks", value=True, key=f"rev_{i}", on_change=revert_packed_callback)
 
 # ========================================================
 # TAB 4: SKLAD
@@ -676,21 +746,6 @@ with tab4:
     st.markdown("### Aktuálny stav skladu (Dózy)")
     st.caption("Fyzický zostatok vypraženej kávy po odpočítaní zabalených sáčkov.")
     
-    stav_doz = {}
-    for zrno, data in st.session_state.priebeh_prazenia.items():
-        if data.get("davky_hotovo", 0) > 0 or data.get("hotovo"):
-            stav_doz[zrno] = stav_doz.get(zrno, 0.0) + data.get("uprazena_real", 0.0)
-            
-    aktivne_objednavky = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True]
-    for o in aktivne_objednavky:
-        if o.get("Potvrdene") == True and o.get("Sudy") != True:
-            zabalena_vaha_kg = o["Zabalené (ks)"] * o["Gramáž"] / 1000.0
-            if o["Káva"] in kavy_recepty:
-                recept = kavy_recepty[o["Káva"]]["recept"]
-                for zrno, podiel in recept.items():
-                    if zrno in stav_doz:
-                        stav_doz[zrno] -= (zabalena_vaha_kg * podiel)
-
     if not stav_doz:
         st.info("Sklad je prázdny. Zatiaľ nebolo nič upražené.")
     else:
