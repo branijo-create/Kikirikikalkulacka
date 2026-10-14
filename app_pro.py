@@ -476,6 +476,7 @@ def obnov_zo_zalohy_callback():
     st.session_state.historia_zoznam = []
     st.session_state.potvrdenie_obnovy = False
     st.session_state.msg_obnova = ("success", f"Obnovené na stav z {z['cas']}. Predošlý stav je uložený v histórii.")
+    st.session_state._po_obnove = True
 
 if 'sklad' not in st.session_state:
     zaloha_dict, cas, n_prazenia = nacitaj_z_google_sheets()
@@ -498,15 +499,120 @@ if 'nazov_prazenia' not in st.session_state:
 if 'form_key' not in st.session_state: st.session_state.form_key = 0
 def vynuluj_policka(): st.session_state.form_key += 1
 
+# --- SPRÁVA: ZÁMOK (inventúra, log, obnova) ---
+@st.dialog("🔒 Správa skladu", width="large")
+def spravca_dialog():
+    if st.session_state.pop("_po_obnove", False):
+        st.rerun()
+    if not st.session_state.get("admin_odomknute", False):
+        if not st.secrets.get("inventura_heslo", ""):
+            st.warning("Heslo nie je nastavené v Secrets (kľúč `inventura_heslo`).")
+            return
+        with st.form("form_heslo", clear_on_submit=True):
+            heslo = st.text_input("Heslo:", type="password")
+            ok = st.form_submit_button("Odomknúť", type="primary")
+        if ok:
+            if over_heslo(heslo):
+                st.session_state.admin_odomknute = True
+                st.rerun(scope="fragment")
+            else:
+                st.error("Nesprávne heslo.")
+        return
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("📦 Zavrieť a ísť na inventúru", use_container_width=True):
+            st.rerun()
+    with col_b:
+        if st.button("🔒 Zamknúť", use_container_width=True):
+            st.session_state.admin_odomknute = False
+            st.rerun()
+    st.caption("Inventúra je odomknutá v podzáložkách GC / RC / Výrobky v záložke Sklad.")
+
+    tab_log, tab_obnova = st.tabs(["**📜 Log**", "**⏪ Obnova**"])
+    with tab_log:
+        st.caption("Každá akcia v appke = riadok v liste „Log“ v Google tabuľke. Najnovšie hore.")
+        if st.button("Načítať / obnoviť log", key="btn_log"):
+            try:
+                st.session_state.log_df = nacitaj_log()
+            except Exception as e:
+                st.error(f"Log sa nepodarilo načítať: {e}")
+        df_log = st.session_state.get("log_df")
+        if df_log is not None:
+            if df_log.empty:
+                st.info("Log je zatiaľ prázdny.")
+            else:
+                col_f1, col_f2 = st.columns(2)
+                with col_f1:
+                    filtr_akcia = st.multiselect("Akcia:", sorted(df_log["Akcia"].unique()), key="filtr_akcia")
+                with col_f2:
+                    filtr_text = st.text_input("Hľadať (SKU, názov, odberateľ…):", key="filtr_text")
+                df_view = df_log
+                if filtr_akcia:
+                    df_view = df_view[df_view["Akcia"].isin(filtr_akcia)]
+                if filtr_text:
+                    maska = df_view.apply(lambda r: filtr_text.lower() in " ".join(r.astype(str)).lower(), axis=1)
+                    df_view = df_view[maska]
+                st.caption(f"Zobrazených {min(len(df_view), 2000)} z {len(df_view)} riadkov.")
+                st.dataframe(df_view.head(2000), use_container_width=True, hide_index=True, height=500)
+                st.download_button("Stiahnuť log (.csv)", data=df_view.to_csv(index=False).encode("utf-8-sig"),
+                                   file_name=f"Kikiriki_Log_{DNESNY_DATUM}.csv", mime="text/csv")
+
+    with tab_obnova:
+        st.caption("Vráti appku do stavu z vybraného snapshotu. Aktuálny stav sa pred obnovou automaticky uloží do histórie, takže obnova sa dá vrátiť.")
+        msg = st.session_state.pop("msg_obnova", None)
+        if msg:
+            (st.success if msg[0] == "success" else st.error)(msg[1])
+        if st.button("Načítať zoznam záloh", key="btn_hist"):
+            try:
+                st.session_state.historia_zoznam = nacitaj_historiu()
+            except Exception as e:
+                st.error(f"Históriu sa nepodarilo načítať: {e}")
+        zoznam = st.session_state.get("historia_zoznam", [])
+        if zoznam:
+            idx = st.selectbox("Vyber snapshot:", options=list(range(len(zoznam))),
+                               format_func=lambda i: f"{zoznam[i]['cas']} | {zoznam[i]['nazov']}", key="vyber_zalohy")
+            try:
+                nahlad = json.loads(zoznam[idx]["data"])
+                obj = nahlad.get("objednavky", []) if isinstance(nahlad, dict) else nahlad
+                sklad_n = nahlad.get("sklad", {}) if isinstance(nahlad, dict) else {}
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Objednávky", len([o for o in obj if not o.get("❌ Zmazať")]))
+                c2.metric("Zelená spolu", f"{sum(sklad_n.get('zelena', {}).values()):.1f} kg")
+                c3.metric("Sáčky v regáli", int(sum(sklad_n.get('zabalena', {}).values())))
+            except Exception:
+                st.warning("Náhľad tohto snapshotu sa nedá zobraziť.")
+            st.checkbox("Rozumiem, že prepíšem aktuálny stav appky týmto snapshotom.", key="potvrdenie_obnovy")
+            st.button("⏪ Obnoviť tento stav", type="primary", disabled=not st.session_state.get("potvrdenie_obnovy", False),
+                      on_click=obnov_zo_zalohy_callback)
+        elif "historia_zoznam" in st.session_state:
+            st.info("História je zatiaľ prázdna.")
+
+
 # --- HLAVIČKA A LOGO ---
-col_head_left, col_head_right = st.columns([3, 1])
+def logo_html():
+    import base64
+    for subor, mime in (("logo.png", "image/png"), ("logo.svg", "image/svg+xml")):
+        if os.path.exists(subor):
+            with open(subor, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            return f"<div style='text-align:right;'><img src='data:{mime};base64,{b64}' style='width:110px;'></div>"
+    return "<div style='text-align:right;'><span style='font-family: \"Barlow Condensed\", sans-serif; font-weight: 900; color: #2B5098; font-size: 1.8rem; letter-spacing: 2px;'>KIKIRIKI</span></div>"
+
+col_head_left, col_head_lock, col_head_logo = st.columns([14, 1, 2], vertical_alignment="center")
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 9.0 | Výroba, Sklad & ERP Kódy")
-with col_head_right:
-    if os.path.exists("logo.png"): st.image("logo.png", width=110)
-    elif os.path.exists("logo.svg"): st.image("logo.svg", width=110)
-    else: st.markdown("<div style='text-align: right; padding-top: 10px;'><span style='font-family: \"Barlow Condensed\", sans-serif; font-weight: 900; color: #2B5098; font-size: 1.8rem; letter-spacing: 2px;'>KIKIRIKI</span></div>", unsafe_allow_html=True)
+    st.caption("Verzia 9.1 | Výroba, Sklad & ERP Kódy")
+with col_head_lock:
+    ikona = "🔓" if st.session_state.get("admin_odomknute", False) else "🔒"
+    if st.button(ikona, key="btn_zamok", help="Inventúra, log a obnova"):
+        spravca_dialog()
+with col_head_logo:
+    st.markdown(logo_html(), unsafe_allow_html=True)
+
+msg_obn = st.session_state.pop("msg_obnova", None)
+if msg_obn:
+    (st.success if msg_obn[0] == "success" else st.error)(msg_obn[1])
 
 st.text_input("Identifikátor praženia:", key="nazov_prazenia", on_change=auto_uloz)
 
@@ -934,7 +1040,7 @@ def zafarbi_zaporne(v):
 
 def inventura_editor(typ, jednotka, akcia, odomknute):
     if not odomknute:
-        st.caption("🔒 Inventúru odomkneš heslom v hornej časti záložky Sklad.")
+        st.caption("🔒 Inventúru odomkneš zámkom 🔒 vedľa loga vpravo hore.")
         return
     with st.expander("🔒 Inventúra – ručne prepísať stav", expanded=False):
         st.warning("Úpravou v tabuľke natvrdo prepíšeš evidenčné stavy. Zmena sa zapíše do logu aj histórie.")
@@ -956,15 +1062,7 @@ def inventura_editor(typ, jednotka, akcia, odomknute):
 with tab4:
     st.markdown("### Sklad")
 
-    heslo_inv = st.text_input("🔒 Heslo pre inventúru, log a obnovu:", type="password", key="heslo_inv")
-    vysledok_hesla = over_heslo(heslo_inv) if heslo_inv else False
-    odomknute = vysledok_hesla is True
-    if vysledok_hesla is None:
-        st.warning("Heslo nie je nastavené v Secrets (kľúč `inventura_heslo`). Inventúra, log a obnova sú zamknuté.")
-    elif heslo_inv and not odomknute:
-        st.error("Nesprávne heslo.")
-    elif odomknute:
-        st.success("Odomknuté: inventúra v každej podzáložke, log a obnova nižšie.")
+    odomknute = st.session_state.get("admin_odomknute", False)
 
     tab_gc, tab_rc, tab_pc = st.tabs(["**GC – Zelená káva**", "**RC – Upražená (dózy)**", "**Výrobky – Sáčky**"])
 
@@ -1012,69 +1110,6 @@ with tab4:
             st.dataframe(df_pc_view.style.map(zafarbi_zaporne, subset=["Stav (ks)", "Váha (kg)"]).format({"Váha (kg)": "{:.2f}"}),
                          use_container_width=True, hide_index=True)
         inventura_editor("zabalena", "ks", "Výrobky", odomknute)
-
-    if odomknute:
-        st.divider()
-        st.markdown("### 🔒 Log a obnova")
-        tab_log, tab_obnova = st.tabs(["**📜 Log**", "**⏪ Obnova**"])
-
-    with tab_log:
-        st.caption("Každá akcia v appke = riadok v liste „Log“ v Google tabuľke. Najnovšie hore.")
-        if st.button("Načítať / obnoviť log", key="btn_log"):
-            try:
-                st.session_state.log_df = nacitaj_log()
-            except Exception as e:
-                st.error(f"Log sa nepodarilo načítať: {e}")
-        df_log = st.session_state.get("log_df")
-        if df_log is not None:
-            if df_log.empty:
-                st.info("Log je zatiaľ prázdny.")
-            else:
-                col_f1, col_f2 = st.columns(2)
-                with col_f1:
-                    filtr_akcia = st.multiselect("Akcia:", sorted(df_log["Akcia"].unique()), key="filtr_akcia")
-                with col_f2:
-                    filtr_text = st.text_input("Hľadať (SKU, názov, odberateľ…):", key="filtr_text")
-                df_view = df_log
-                if filtr_akcia:
-                    df_view = df_view[df_view["Akcia"].isin(filtr_akcia)]
-                if filtr_text:
-                    maska = df_view.apply(lambda r: filtr_text.lower() in " ".join(r.astype(str)).lower(), axis=1)
-                    df_view = df_view[maska]
-                st.caption(f"Zobrazených {min(len(df_view), 2000)} z {len(df_view)} riadkov.")
-                st.dataframe(df_view.head(2000), use_container_width=True, hide_index=True, height=500)
-                st.download_button("Stiahnuť log (.csv)", data=df_view.to_csv(index=False).encode("utf-8-sig"),
-                                   file_name=f"Kikiriki_Log_{DNESNY_DATUM}.csv", mime="text/csv")
-
-    with tab_obnova:
-        st.caption("Vráti appku do stavu z vybraného snapshotu. Aktuálny stav sa pred obnovou automaticky uloží do histórie, takže obnova sa dá vrátiť.")
-        msg = st.session_state.pop("msg_obnova", None)
-        if msg:
-            (st.success if msg[0] == "success" else st.error)(msg[1])
-        if st.button("Načítať zoznam záloh", key="btn_hist"):
-            try:
-                st.session_state.historia_zoznam = nacitaj_historiu()
-            except Exception as e:
-                st.error(f"Históriu sa nepodarilo načítať: {e}")
-        zoznam = st.session_state.get("historia_zoznam", [])
-        if zoznam:
-            idx = st.selectbox("Vyber snapshot:", options=list(range(len(zoznam))),
-                               format_func=lambda i: f"{zoznam[i]['cas']} | {zoznam[i]['nazov']}", key="vyber_zalohy")
-            try:
-                nahlad = json.loads(zoznam[idx]["data"])
-                obj = nahlad.get("objednavky", []) if isinstance(nahlad, dict) else nahlad
-                sklad_n = nahlad.get("sklad", {}) if isinstance(nahlad, dict) else {}
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Objednávky", len([o for o in obj if not o.get("❌ Zmazať")]))
-                c2.metric("Zelená spolu", f"{sum(sklad_n.get('zelena', {}).values()):.1f} kg")
-                c3.metric("Sáčky v regáli", int(sum(sklad_n.get('zabalena', {}).values())))
-            except Exception:
-                st.warning("Náhľad tohto snapshotu sa nedá zobraziť.")
-            st.checkbox("Rozumiem, že prepíšem aktuálny stav appky týmto snapshotom.", key="potvrdenie_obnovy")
-            st.button("⏪ Obnoviť tento stav", type="primary", disabled=not st.session_state.get("potvrdenie_obnovy", False),
-                      on_click=obnov_zo_zalohy_callback)
-        elif "historia_zoznam" in st.session_state:
-            st.info("História je zatiaľ prázdna.")
 
 
 # ========================================================
