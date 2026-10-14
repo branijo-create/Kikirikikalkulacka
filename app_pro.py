@@ -9,10 +9,20 @@ import json
 st.set_page_config(page_title="Kikiriki Roastery PRO", page_icon="☕", layout="wide")
 
 # ==========================================
-# 🎨 FIREMNÝ DIZAJN (BARLOW, BOLD ZÁLOŽKY & FARBY)
+# 🎨 FIREMNÝ DIZAJN (BARLOW, MOBILNÝ FIX FARIEB & BOLD)
 # ==========================================
 firemny_dizajn = """
 <style>
+    /* Zafixovanie farieb a zákaz núteného dark mode na mobiloch */
+    :root {
+        color-scheme: light only;
+    }
+    
+    /* Vynútenie krémového pozadia pre celú aplikáciu aj na mobile */
+    .stApp {
+        background-color: #F5F0E6 !important;
+    }
+
     /* Natiahnutie fontov Barlow a Barlow Condensed z Google Fonts */
     @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap');
 
@@ -197,7 +207,7 @@ col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 6.4 | Výrobný manažment")
+    st.caption("Verzia 6.5 | Výrobný manažment")
 
 with col_head_right:
     logo_html = """
@@ -521,7 +531,6 @@ with tab2:
             
             stav = st.session_state.priebeh_prazenia.get(zrno, {"hotovo": False, "zelena_real": 0.0, "uprazena_real": 0.0})
             
-            # Pôvodný tvar + tučný názov kávy a počet batchov cez Markdown (ikonu/štát ponecháme)
             stav_text = "✅ Hotovo" if stav['hotovo'] else "⏳ Na rade:"
             expander_title = f"{stav_text} **{zrno}** ({davky_plan} batchov)"
             
