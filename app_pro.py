@@ -11,7 +11,6 @@ st.set_page_config(page_title="Roastery Manager PRO v5.0", page_icon="🏭", lay
 KAPACITA_ZELENA_BATCH = 5.0
 STANDARDNY_VYPEK = 20
 DNESNY_DATUM = datetime.now().strftime("%d-%m-%Y")
-# ZMENA: Nová oddelená databáza pre PRO verziu!
 NAZOV_TABULKY_ZALOHA = "Kikiriki_Zaloha_PRO"
 
 kavy_recepty = {
@@ -48,7 +47,6 @@ def nacitaj_z_google_sheets():
         creds = get_google_credentials()
         client = gspread.authorize(creds)
         
-        # Ak tabuľka neexistuje, vytvorí ju
         try: spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
         except gspread.exceptions.SpreadsheetNotFound:
             spreadsheet = client.create(NAZOV_TABULKY_ZALOHA)
@@ -64,9 +62,7 @@ def nacitaj_z_google_sheets():
             val_data, val_cas, val_nazov = None, "Neznámy čas", ""
             
         data = json.loads(val_data) if val_data else {"objednavky": [], "prazenie": {}}
-        # Migrácia starých dát
         if isinstance(data, list): data = {"objednavky": data, "prazenie": {}}
-        
         return data, val_cas, val_nazov
     except Exception as e:
         return None, None, None
@@ -79,7 +75,6 @@ def uloz_do_google_sheets(data_dict, nazov_prazenia):
         spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
         sheet1 = spreadsheet.sheet1
         cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        
         sheet1.update_acell('A1', json.dumps(data_dict, ensure_ascii=False))
         sheet1.update_acell('B1', cas_ulozenia)
         sheet1.update_acell('C1', str(nazov_prazenia))
@@ -140,9 +135,9 @@ with tab1:
             kusy_1000 = st.number_input("1000g (ks):", min_value=0, step=1, key=f"k_1000_{st.session_state.form_key}")
 
         if st.button("➕ Pridať do zoznamu", type="secondary"):
-            if kusy_220 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 220, "Kusy": kusy_220, "Zabalené (ks)": kusy_220, "Potvrdene": False, "❌ Zmazať": False})
-            if kusy_500 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 500, "Kusy": kusy_500, "Zabalené (ks)": kusy_500, "Potvrdene": False, "❌ Zmazať": False})
-            if kusy_1000 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 1000, "Kusy": kusy_1000, "Zabalené (ks)": kusy_1000, "Potvrdene": False, "❌ Zmazať": False})
+            if kusy_220 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 220, "Kusy": kusy_220, "Zabalené (ks)": kusy_220, "Potvrdene": False, "❌ Zmazať": False, "Sudy": False})
+            if kusy_500 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 500, "Kusy": kusy_500, "Zabalené (ks)": kusy_500, "Potvrdene": False, "❌ Zmazať": False, "Sudy": False})
+            if kusy_1000 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 1000, "Kusy": kusy_1000, "Zabalené (ks)": kusy_1000, "Potvrdene": False, "❌ Zmazať": False, "Sudy": False})
             auto_uloz()
             vynuluj_policka()
             st.rerun()
@@ -154,7 +149,7 @@ with tab1:
             for k in kavy_recepty.keys(): inputs_kavy[k] = st.number_input(f"{k} (ks):", min_value=0, step=1, key=f"k_{k}_{st.session_state.form_key}")
         if st.button("➕ Pridať do zoznamu", type="secondary"):
             for k, v in inputs_kavy.items():
-                if v > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": k, "Gramáž": gramaz, "Kusy": v, "Zabalené (ks)": v, "Potvrdene": False, "❌ Zmazať": False})
+                if v > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": k, "Gramáž": gramaz, "Kusy": v, "Zabalené (ks)": v, "Potvrdene": False, "❌ Zmazať": False, "Sudy": False})
             auto_uloz()
             vynuluj_policka()
             st.rerun()
@@ -175,10 +170,51 @@ with tab1:
 
     st.divider()
     st.subheader("🛒 Tvoja kniha objednávok")
+    
+    # Pridanie explicitného importu z Excelu, chráneného voči NaN
+    st.markdown("📁 **Import z Excelu**")
+    nahraty_subor = st.file_uploader("Nahraj .xlsx súbor", type=["xlsx"])
+    if nahraty_subor is not None:
+        try:
+            xl = pd.ExcelFile(nahraty_subor)
+            df_import = xl.parse('Spracovane_Objednavky') if 'Spracovane_Objednavky' in xl.sheet_names else xl.parse(0)
+            if st.button("📥 Načítať dáta z tohto Excelu"):
+                for index, row in df_import.iterrows():
+                    kusy_zaklad = int(row.get("Kusy", 0))
+                    zabalene_hist = int(row.get("Zabalené (ks)", kusy_zaklad)) 
+                    potvrdene_hist = bool(row.get("Potvrdene", False))
+                    sudy_hist = bool(row.get("Sudy", False)) if pd.notna(row.get("Sudy")) else False
+                    st.session_state.aktualne_objednavky.append({
+                        "Odberateľ": str(row.get("Odberateľ", "Neznámy")),
+                        "Káva": str(row.get("Káva", "")),
+                        "Gramáž": int(row.get("Gramáž", 0)),
+                        "Kusy": kusy_zaklad,
+                        "Zabalené (ks)": zabalene_hist,
+                        "Potvrdene": potvrdene_hist,
+                        "Sudy": sudy_hist,
+                        "❌ Zmazať": False
+                    })
+                auto_uloz()
+                st.success("Dáta importované a uložené do cloudu!")
+                st.rerun()
+        except Exception as e:
+            st.error("Chyba Excelu.")
+
     if st.session_state.aktualne_objednavky:
+        # Čistenie Pandas NaN chýb pred zobrazením tabuľky
         df_objednavky_vstup = pd.DataFrame(st.session_state.aktualne_objednavky)
+        if 'Sudy' not in df_objednavky_vstup.columns:
+            df_objednavky_vstup['Sudy'] = False
+        df_objednavky_vstup['Sudy'] = df_objednavky_vstup['Sudy'].fillna(False).astype(bool)
+        
         upravene_df = st.data_editor(df_objednavky_vstup, use_container_width=True, num_rows="fixed", hide_index=False, key="tabulka_objednavok")
         novy_stav = upravene_df.to_dict('records')
+        
+        # Ošetrenie NaN hodnôt aj pri spätom prevode do slovníka
+        for item in novy_stav:
+            if pd.isna(item.get('Sudy')): item['Sudy'] = False
+            else: item['Sudy'] = bool(item['Sudy'])
+            
         if novy_stav != st.session_state.aktualne_objednavky:
             st.session_state.aktualne_objednavky = novy_stav
             auto_uloz()
@@ -186,13 +222,13 @@ with tab1:
         col_del1, col_del2, col_del3 = st.columns(3)
         with col_del1:
             if st.button("🗑️ Odstrániť zaškrtnuté", type="primary"):
-                st.session_state.aktualne_objednavky = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
+                st.session_state.aktualne_objednavky = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True]
                 auto_uloz()
                 st.rerun()
         with col_del3:
             if st.button("⚠️💣 VYMAZAŤ CELÝ VÍKEND (Nový štart)", type="primary"):
                 st.session_state.aktualne_objednavky = []
-                st.session_state.priebeh_prazenia = {} # Resetne aj dózy!
+                st.session_state.priebeh_prazenia = {} 
                 auto_uloz()
                 st.rerun()
     else:
@@ -205,12 +241,15 @@ with tab2:
     st.header("🔥 Zoznam úloh pre Pražičku")
     st.write("Podľa prijatých objednávok a požiadaviek na sklad potrebuješ upražiť toto zrno. Zapisuj si reálne praženia priamo sem.")
     
-    aktivne_objednavky = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
+    aktivne_objednavky = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True]
     potreba_zelenej_podla_zrna = {}
     potreba_uprazenej_podla_zrna = {}
     
     for o in aktivne_objednavky:
-        if o.get("Sudy", False):
+        # Pevná poistka proti NaN
+        je_sud = o.get("Sudy") == True
+        
+        if je_sud:
             zelena_kg_zaklad = o["Kusy"] * KAPACITA_ZELENA_BATCH
             uprazena_kg = zelena_kg_zaklad * (1 - (STANDARDNY_VYPEK / 100.0))
         else:
@@ -226,12 +265,10 @@ with tab2:
     if not potreba_zelenej_podla_zrna:
         st.info("Zatiaľ nie je čo pražiť.")
     else:
-        # Checklista pre každé zrno
         for zrno, teoreticka_vaha_zelena in potreba_zelenej_podla_zrna.items():
             davky_plan = math.ceil(teoreticka_vaha_zelena / KAPACITA_ZELENA_BATCH)
             zelena_plan = davky_plan * KAPACITA_ZELENA_BATCH
             
-            # Získanie aktuálneho stavu z pamäte
             stav = st.session_state.priebeh_prazenia.get(zrno, {"hotovo": False, "zelena_real": 0.0, "uprazena_real": 0.0})
             
             with st.expander(f"{'✅' if stav['hotovo'] else '⏳'} Zrnko: {zrno} (Plán: {davky_plan} dávok)", expanded=not stav['hotovo']):
@@ -272,27 +309,21 @@ with tab2:
 with tab3:
     st.header("📦 Zostatky v Dózach a Odškrtávanie sáčkov")
     
-    # --- VÝPOČET STAVU DÓZ ---
-    # 1. Získame koľko sa reálne upražilo (prítok do Dózy)
     stav_doz = {}
     for zrno, data in st.session_state.priebeh_prazenia.items():
         if data["hotovo"]:
             stav_doz[zrno] = stav_doz.get(zrno, 0.0) + data["uprazena_real"]
             
-    # 2. Odpočítame koľko sa reálne ZABALILO (odtok z Dózy)
-    aktivne_objednavky = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
+    aktivne_objednavky = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True]
     for o in aktivne_objednavky:
-        # Rátame iba tie, ktoré sú naozaj odškrtnuté že sú zabalené a NIE SÚ to Sudy (sudy sú už v dóze ako zostatok)
-        if o.get("Potvrdene", False) and not o.get("Sudy", False):
+        if o.get("Potvrdene") == True and o.get("Sudy") != True:
             zabalena_vaha_kg = o["Zabalené (ks)"] * o["Gramáž"] / 1000.0
             if o["Káva"] in kavy_recepty:
                 recept = kavy_recepty[o["Káva"]]["recept"]
                 for zrno, podiel in recept.items():
-                    # Odpočítame podiel z konkrétnej zložky (blendovanie sa deje pri balení)
                     if zrno in stav_doz:
                         stav_doz[zrno] -= (zabalena_vaha_kg * podiel)
 
-    # Vykreslenie vizuálu Dóz
     st.subheader("🛢️ Aktuálny fyzický stav (Čo by malo byť v bareloch)")
     if not stav_doz:
         st.info("Zatiaľ nemáš upražené a potvrdené žiadne zrno z Pražiarne.")
@@ -300,7 +331,7 @@ with tab3:
         dozy_cols = st.columns(len(stav_doz))
         for idx, (zrno, vaha) in enumerate(stav_doz.items()):
             with dozy_cols[idx % len(dozy_cols)]:
-                farba = "green" if vaha > 0 else ("red" if vaha < 0 else "gray")
+                farba = "green" if vaha >= 0 else "red"
                 st.metric(label=zrno, value=f"{vaha:.2f} kg", delta="Na sklade" if vaha >= 0 else "Chýba!", delta_color="normal" if vaha>=0 else "inverse")
 
     st.divider()
@@ -315,13 +346,12 @@ with tab3:
         auto_uloz() 
 
     for i, obj in enumerate(st.session_state.aktualne_objednavky):
-        # Ignorujeme zmazané a SUDY (tým netreba etikety)
-        if obj.get('❌ Zmazať', False) or obj.get('Sudy', False): continue
+        if obj.get('❌ Zmazať') == True or obj.get('Sudy') == True: continue
             
         with st.container():
             aktualne_zabalene = int(obj.get('Zabalené (ks)', obj['Kusy']))
             objednane = int(obj['Kusy'])
-            potvrdene = obj.get('Potvrdene', False)
+            potvrdene = obj.get('Potvrdene') == True
             
             col_text, col_cisla, col_chk = st.columns([3, 1, 1])
             with col_text:
@@ -341,6 +371,4 @@ with tab3:
 # ========================================================
 with tab4:
     st.header("📤 Generovanie TXT pre Evičku (Omega)")
-    st.write("Funguje identicky ako doteraz - generuje sa z potvrdených a zabalených kusov.")
-    st.info("Kód pre prepojenie s cenníkom a KROS Omega zostal zhodný z verzie 4.2.")
-    # (Sem by išiel ten istý obrovský blok kódu na generovanie TXT a Excelu pre účtovníčku)
+    st.write("Dáta pre export a fakturáciu zatiaľ pripravujeme na ostrej verzii 4.2.")
