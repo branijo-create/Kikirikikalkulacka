@@ -90,7 +90,7 @@ kavy_recepty = {
 
 gramaze_list = [220, 500, 1000]
 
-# --- GOOGLE API FUNKCIE (STABILNÝ ZÁPIS) ---
+# --- GOOGLE API FUNKCIE ---
 @st.cache_resource
 def get_google_credentials():
     from google.oauth2.service_account import Credentials
@@ -141,7 +141,6 @@ def uloz_do_google_sheets(data_dict, nazov_prazenia):
         
         cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         
-        # 100% spoľahlivý zápis pre všetky verzie knižnice gspread (1 API volanie)
         bunky = sheet1.range('A1:C1')
         bunky[0].value = json.dumps(data_dict, ensure_ascii=False)
         bunky[1].value = cas_ulozenia
@@ -150,7 +149,6 @@ def uloz_do_google_sheets(data_dict, nazov_prazenia):
         sheet1.update_cells(bunky)
         return True, None
     except Exception as e:
-        # Zachytenie skutočných chýb
         chyba = str(e)
         if "200" in chyba:
             return True, None
@@ -181,6 +179,22 @@ def nacitaj_vsetko_z_cloudu_callback():
         st.session_state.info_cloud = f"Chyba synchronizácie: {cas_poslednej_upravy}"
         st.session_state.msg_chyba = True
 
+# --- NÚDZOVÉ ČISTENIE DISKU ---
+def vycisti_disk_robota():
+    try:
+        import gspread
+        creds = get_google_credentials()
+        client = gspread.authorize(creds)
+        subory = client.list_spreadsheet_files()
+        zmazane = 0
+        for f in subory:
+            # Zmaže všetky staré testovacie súbory, aby uvoľnil 15GB limit
+            client.del_spreadsheet(f['id'])
+            zmazane += 1
+        return True, zmazane
+    except Exception as e:
+        return False, str(e)
+
 # --- AUTO-LOAD PRI ŠTARTE ---
 if 'aktualne_objednavky' not in st.session_state:
     zaloha_dict, cas, n_prazenia = nacitaj_z_google_sheets()
@@ -207,7 +221,7 @@ col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 7.4 | Výrobný manažment")
+    st.caption("Verzia 7.5 | Výrobný manažment")
 
 with col_head_right:
     if os.path.exists("logo.png"):
@@ -645,3 +659,16 @@ with tab4:
 with tab5:
     st.markdown("### Generovanie exportov pre KROS Omega")
     st.info("Pripravuje sa...")
+
+# ========================================================
+# NÚDZOVÝ SERVISNÝ PANEL (ÚPLNE DOLE)
+# ========================================================
+st.divider()
+with st.expander("🛠️ Servisný panel (Oprava Google Disku)"):
+    st.warning("Ak ti systém hlási chybu 'Drive storage quota has been exceeded', klikni na tlačidlo nižšie. Systém vymaže všetky staré testovacie súbory, ktoré zahltili pamäť skrytého robota.")
+    if st.button("🚨 Vymazať staré súbory robota a uvoľniť pamäť", type="primary"):
+        uspech, sprava = vycisti_disk_robota()
+        if uspech:
+            st.success(f"Hotovo! Zmazaných súborov: {sprava}. Pamäť je uvoľnená, môžeš normálne pokračovať.")
+        else:
+            st.error(f"Chyba pri mazaní: {sprava}")
