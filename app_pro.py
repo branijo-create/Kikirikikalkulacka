@@ -10,7 +10,7 @@ import json
 st.set_page_config(page_title="Kikiriki Roastery PRO", page_icon="☕", layout="wide")
 
 # ==========================================
-# 🎨 FIREMNÝ DIZAJN (PRESNÉ ZACIELENIE NA STREAMLIT TABS)
+# 🎨 FIREMNÝ DIZAJN (BARLOW & VEĽKÉ BOLD ZÁLOŽKY)
 # ==========================================
 firemny_dizajn = """
 <style>
@@ -36,31 +36,22 @@ firemny_dizajn = """
         font-size: 2.2rem !important;
     }
 
-    /* PRESNÉ ZACIELENIE NA TEXT V ZÁLOŽKÁCH STREAMLITU */
-    button[data-baseweb="tab"] {
-        height: 52px !important;
-        padding: 0px 24px !important;
+    /* VYNÚTENIE VÄČŠIEHO FONTU A FIREMNÝCH FARIEB PRE CELÚ LIŠTU ZÁLOŽIEK */
+    div[data-testid="stTabs"] button {
+        padding: 8px 20px !important;
     }
 
-    /* VŠETKY NÁZVY ZÁLOŽIEK: VÄČŠIE A VÝRAZNE TUČNÉ (BOLD) */
-    button[data-baseweb="tab"] div[data-testid="stMarkdownContainer"] p {
+    div[data-testid="stTabs"] button p,
+    div[data-testid="stTabs"] button strong {
         font-family: 'Barlow Condensed', sans-serif !important;
         font-size: 1.35rem !important;
         font-weight: 800 !important;
         letter-spacing: 0.8px !important;
-        text-transform: uppercase !important;
         color: #2B5098 !important;
     }
 
-    /* AKTÍVNA (PREPNUTÁ) ZÁLOŽKA */
-    button[data-baseweb="tab"][aria-selected="true"] {
-        border-bottom-color: #2B5098 !important;
-        border-bottom-width: 3px !important;
-    }
-
-    button[data-baseweb="tab"][aria-selected="true"] div[data-testid="stMarkdownContainer"] p {
-        color: #2B5098 !important;
-        font-weight: 900 !important;
+    div[data-testid="stTabs"] button[aria-selected="true"] {
+        border-bottom: 3px solid #2B5098 !important;
     }
 
     /* Vylepšenie tlačidiel a tabuliek */
@@ -191,16 +182,14 @@ col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 7.0 | Výrobný manažment")
+    st.caption("Verzia 7.1 | Výrobný manažment")
 
 with col_head_right:
-    # Ak je v repozitári nahraté originálne logo logo.png (alebo logo.svg), zobrazí sa priamo
     if os.path.exists("logo.png"):
         st.image("logo.png", width=110)
     elif os.path.exists("logo.svg"):
         st.image("logo.svg", width=110)
     else:
-        # Čisté textové logo bez umelých deformácií
         st.markdown(
             """
             <div style="text-align: right; padding-top: 10px;">
@@ -215,14 +204,14 @@ with col_head_right:
 st.text_input("Identifikátor praženia:", key="nazov_prazenia", on_change=auto_uloz)
 
 # ========================================================
-# 🚀 ZÁLOŽKY
+# 🚀 ZÁLOŽKY PRIAMO S BOLDOM
 # ========================================================
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "OBJEDNÁVKY", 
-    "PRAŽIAREŇ", 
-    "BALENIE", 
-    "SKLAD", 
-    "ÚČTOVNÍCTVO"
+    "**OBJEDNÁVKY**", 
+    "**PRAŽIAREŇ**", 
+    "**BALENIE**", 
+    "**SKLAD**", 
+    "**ÚČTOVNÍCTVO**"
 ])
 
 # ========================================================
