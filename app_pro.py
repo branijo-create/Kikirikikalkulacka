@@ -172,6 +172,7 @@ def get_pc_sku(rc_sku, gramaz):
 NAZVY_ZELENA = {v: k for k, v in SKU_ZELENA.items()}
 NAZVY_UPRAZENA = {v: k for k, v in SKU_UPRAZENA.items()}
 NAZVY_ZABALENA = {get_pc_sku(rc, g): f"{menu} {g}g" for menu, rc in MENU_KAVY.items() for g in gramaze_list}
+PC_NA_KAVU = {get_pc_sku(rc, g): (menu, g) for menu, rc in MENU_KAVY.items() for g in gramaze_list}
 
 PRAZDNY_STAV = {"objednavky": [], "prazenie": {}, "sklad": {"zelena": {}, "uprazena": {}, "zabalena": {}}}
 
@@ -607,7 +608,7 @@ def logo_html():
 col_head_left, col_head_lock, col_head_logo = st.columns([14, 1, 2], vertical_alignment="center")
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 9.8 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 9.9 | Výroba, Sklad & ERP Kódy")
 with col_head_lock:
     ikona = "🔓" if st.session_state.get("admin_odomknute", False) else "🔒"
     if st.button(ikona, key="btn_zamok", help="Inventúra, log a obnova"):
@@ -954,12 +955,23 @@ with tab3:
             sum_pivot_tab3 = sum_pivot_tab3[['Etikety spolu', 220, 500, 1000]]
             sum_pivot_tab3.columns = ['Etikety spolu', '220 g', '500 g', '1000 g']
             sum_pivot_tab3.index.name = 'Káva'
-            styl_tab3 = (sum_pivot_tab3.style
-                .format(lambda v: f"Celkový počet etikiet: {v}", subset=pd.IndexSlice[[RIADOK_SPOLU], ['Etikety spolu']])
-                .set_properties(subset=['Etikety spolu'], **{'font-weight': '800'})
-                .set_properties(subset=pd.IndexSlice[[RIADOK_SPOLU], :], **{'font-weight': '800', 'background-color': 'rgba(43,80,152,0.08)'})
-                .apply_index(lambda idx: ['font-weight: 800' if i == RIADOK_SPOLU else '' for i in idx], axis=0))
-            st.table(styl_tab3)
+            # Vlastné HTML: tučný je len stĺpec "Etikety spolu" a spodný riadok (globálne CSS by inak stučnilo všetko)
+            N, B = "font-weight:400 !important;", "font-weight:800 !important;"
+            bunka = "padding:6px 12px;border-bottom:1px solid rgba(43,80,152,0.15);"
+            hl = "".join(f"<th style='{bunka}{N}text-align:{'left' if c == 'Káva' else 'right'};color:#2B5098;'>{c}</th>"
+                         for c in ['Káva'] + list(sum_pivot_tab3.columns))
+            telo = ""
+            for kava_r, riadok in sum_pivot_tab3.iterrows():
+                je_spolu = kava_r == RIADOK_SPOLU
+                pozadie = "background:rgba(43,80,152,0.08);" if je_spolu else ""
+                telo += f"<tr style='{pozadie}'><td style='{bunka}{B if je_spolu else N}'>{kava_r}</td>"
+                for stlpec, hodnota in riadok.items():
+                    tucne = je_spolu or stlpec == 'Etikety spolu'
+                    text = f"Celkový počet etikiet: {int(hodnota)}" if (je_spolu and stlpec == 'Etikety spolu') else int(hodnota)
+                    telo += f"<td style='{bunka}{B if tucne else N}text-align:right;'>{text}</td>"
+                telo += "</tr>"
+            st.markdown(f"<table style='width:100%;border-collapse:collapse;'><thead><tr>{hl}</tr></thead><tbody>{telo}</tbody></table>",
+                        unsafe_allow_html=True)
         else: st.success("Všetky sáčky sú pripravené v regáli.")
             
         st.divider()
@@ -1175,15 +1187,19 @@ with tab5:
     rozpr = st.session_state.expedicia_rozpracovane
     regal = st.session_state.sklad["zabalena"]
 
-    def expeduj(odb, mnozstva, detail_extra=""):
-        """mnozstva: {index_v_knihe: ks_na_odoslanie}. Plný riadok sa označí ako odoslaný,
-        čiastočný sa rozdelí na odoslanú časť a zvyšok, ktorý ostane otvorený."""
+    def expeduj(odb, mnozstva, detail_extra="", mimo_objednavky=None, zrusit_zvysok=False):
+        """mnozstva: {index_v_knihe: ks}. Plný riadok -> odoslaný. Čiastočný -> odoslaná časť + zvyšok,
+        ktorý ostane otvorený, alebo sa zruší (zrusit_zvysok=True, zákazník dostane menej).
+        mimo_objednavky: {pc_sku: ks} náhrada/navyše – pridá sa ako nový odoslaný riadok."""
         sklad_pred = copy.deepcopy(st.session_state.sklad)
         povodne = st.session_state.aktualne_objednavky
-        nova_kniha, odoslane = [], []
+        nova_kniha, odoslane, zrusene = [], [], []
         for i, o in enumerate(povodne):
+            otvoreny_odb = (o.get('Odberateľ') == odb and not o.get('Potvrdene') and not o.get('❌ Zmazať') and not o.get('Sudy'))
             n = int(mnozstva.get(i, 0))
             if n <= 0:
+                if otvoreny_odb and zrusit_zvysok:
+                    zrusene.append(o); continue
                 nova_kniha.append(o); continue
             kusy = int(o['Kusy'])
             n = min(n, kusy)
@@ -1194,14 +1210,27 @@ with tab5:
                 nova_kniha.append(o)
             else:
                 odoslana_cast = dict(o); odoslana_cast.update({'Kusy': n, 'Zabalené (ks)': n, 'Potvrdene': True})
+                nova_kniha.append(odoslana_cast)
                 zvysok = dict(o); zvysok.update({'Kusy': kusy - n, 'Zabalené (ks)': max(0, int(o.get('Zabalené (ks)', 0)) - n)})
-                nova_kniha.extend([odoslana_cast, zvysok])
+                if zrusit_zvysok: zrusene.append(zvysok)
+                else: nova_kniha.append(zvysok)
             odoslane.append({**o, 'Kusy': n})
+        for pc_sku, n in (mimo_objednavky or {}).items():
+            if n <= 0 or pc_sku not in PC_NA_KAVU: continue
+            kava_m, g_m = PC_NA_KAVU[pc_sku]
+            st.session_state.sklad["zabalena"][pc_sku] = st.session_state.sklad["zabalena"].get(pc_sku, 0) - n
+            novy = {"Odberateľ": odb, "Káva": kava_m, "Gramáž": g_m, "Kusy": n, "Zabalené (ks)": n,
+                    "Potvrdene": True, "Sudy": False, "❌ Zmazať": False, "Poznámka": "mimo objednávky"}
+            nova_kniha.append(novy)
+            odoslane.append(novy)
         st.session_state.aktualne_objednavky = nova_kniha
         st.session_state.pop("tabulka_objednavok", None)
         celkovo = sum(int(o['Kusy']) for o in povodne if o.get('Odberateľ') == odb and not o.get('Potvrdene') and not o.get('❌ Zmazať') and not o.get('Sudy'))
-        akcia = "Expedícia" if sum(mnozstva.values()) >= celkovo else "Čiastočná expedícia"
-        detail = "; ".join(popis_obj(o) for o in odoslane) + (f" | {detail_extra}" if detail_extra else "")
+        akcia = "Expedícia" if (sum(mnozstva.values()) >= celkovo and not zrusene) else ("Expedícia so zmenou" if zrusene or mimo_objednavky else "Čiastočná expedícia")
+        detail = "; ".join(popis_obj(o) for o in odoslane)
+        if zrusene: detail += " | ZRUŠENÉ (zákazník dostal menej): " + "; ".join(popis_obj(o) for o in zrusene)
+        if mimo_objednavky: detail += " | MIMO OBJEDNÁVKY: " + ", ".join(f"{n}× {k}" for k, n in mimo_objednavky.items())
+        if detail_extra: detail += f" | {detail_extra}"
         auto_uloz(akcia=akcia, detail=detail, sklad_pred=sklad_pred)
 
     def stav_odb(odb):
@@ -1304,23 +1333,39 @@ with tab5:
         polozky = stav_odb(odb)
         r = rozpr_odb(odb)
         krabice = r["krabice"]
+        k_mimo = f"exp_mimo_{odb}"
+        # položky mimo objednávky (náhrada / navyše): už vybrané v krabiciach + pri zapnutom prepínači všetko z regálu
+        pol = dict(polozky)
+        skus_mimo = {s_ for k in krabice for s_ in k if s_ not in polozky}
+        if st.session_state.get(k_mimo, False):
+            skus_mimo |= {s_ for s_, ks in regal.items() if int(ks) > 0 and s_ not in polozky and s_ in PC_NA_KAVU}
+        for s_ in skus_mimo:
+            kava_m, g_m = PC_NA_KAVU.get(s_, (s_, 0))
+            pol[s_] = {"sku": s_, "kava": kava_m, "gramaz": g_m, "objednane": 0, "zabalene": 0, "indexy": [], "mimo": True}
+
+        def limit_sku(s_):
+            v_reg = int(regal.get(s_, 0))
+            return v_reg if pol[s_].get("mimo") else max(0, min(pol[s_]["objednane"], v_reg))
+
         obj_spolu = sum(p["objednane"] for p in polozky.values())
         vybrane_vsetko = sum(vybrane_spolu(r, s_) for s_ in polozky)
+        vybrane_mimo = sum(vybrane_spolu(r, s_) for s_ in pol if pol[s_].get("mimo"))
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Objednané", f"{obj_spolu} ks")
-        c2.metric("Vybrané do krabíc", f"{vybrane_vsetko} ks")
+        c2.metric("Vybrané do krabíc", f"{vybrane_vsetko} ks", delta=f"+{vybrane_mimo} mimo obj." if vybrane_mimo else None, delta_color="off")
         c3.metric("Krabíc", len([k for k in krabice if k]))
 
         # ---------- VÝBER: krabica + krížové filtre káva / gramáž ----------
         st.markdown("#### 📦 Čo dávam do krabice")
         VSETKY = "Všetky"
         def zostava_sku(s_):
-            return polozky[s_]["objednane"] - vybrane_spolu(r, s_)
+            if pol[s_].get("mimo"): return max(0, int(regal.get(s_, 0)) - vybrane_spolu(r, s_))
+            return pol[s_]["objednane"] - vybrane_spolu(r, s_)
 
         k_krab, k_kava, k_gram, k_hotove = f"exp_krabica_{odb}", f"exp_kava_{odb}", f"exp_gramaz_{odb}", f"exp_hotove_{odb}"
         aj_hotove = st.session_state.get(k_hotove, False)
-        kandidati = [s_ for s_ in polozky if aj_hotove or zostava_sku(s_) > 0]
+        kandidati = [s_ for s_ in pol if aj_hotove or zostava_sku(s_) > 0]
 
         moznosti_krab = list(range(len(krabice) + 1))
         if st.session_state.get(k_krab) not in moznosti_krab:
@@ -1329,18 +1374,18 @@ with tab5:
         # krížové filtre: káva ponúka len kávy s vybranou gramážou a naopak
         vyb_kava = st.session_state.get(k_kava, VSETKY)
         vyb_gram = st.session_state.get(k_gram, VSETKY)
-        kavy_moz = sorted({polozky[s_]["kava"] for s_ in kandidati if vyb_gram == VSETKY or polozky[s_]["gramaz"] == vyb_gram})
-        gram_moz = sorted({polozky[s_]["gramaz"] for s_ in kandidati if vyb_kava == VSETKY or polozky[s_]["kava"] == vyb_kava})
+        kavy_moz = sorted({pol[s_]["kava"] for s_ in kandidati if vyb_gram == VSETKY or pol[s_]["gramaz"] == vyb_gram})
+        gram_moz = sorted({pol[s_]["gramaz"] for s_ in kandidati if vyb_kava == VSETKY or pol[s_]["kava"] == vyb_kava})
         if vyb_kava != VSETKY and vyb_kava not in kavy_moz: st.session_state[k_kava] = VSETKY
         if vyb_gram != VSETKY and vyb_gram not in gram_moz: st.session_state[k_gram] = VSETKY
         vyb_kava = st.session_state.get(k_kava, VSETKY); vyb_gram = st.session_state.get(k_gram, VSETKY)
-        kavy_moz = sorted({polozky[s_]["kava"] for s_ in kandidati if vyb_gram == VSETKY or polozky[s_]["gramaz"] == vyb_gram})
-        gram_moz = sorted({polozky[s_]["gramaz"] for s_ in kandidati if vyb_kava == VSETKY or polozky[s_]["kava"] == vyb_kava})
+        kavy_moz = sorted({pol[s_]["kava"] for s_ in kandidati if vyb_gram == VSETKY or pol[s_]["gramaz"] == vyb_gram})
+        gram_moz = sorted({pol[s_]["gramaz"] for s_ in kandidati if vyb_kava == VSETKY or pol[s_]["kava"] == vyb_kava})
 
         def zost_kava(k):
-            return sum(zostava_sku(s_) for s_ in polozky if polozky[s_]["kava"] == k and (vyb_gram == VSETKY or polozky[s_]["gramaz"] == vyb_gram))
+            return sum(zostava_sku(s_) for s_ in pol if pol[s_]["kava"] == k and (vyb_gram == VSETKY or pol[s_]["gramaz"] == vyb_gram))
         def zost_gram(g):
-            return sum(zostava_sku(s_) for s_ in polozky if polozky[s_]["gramaz"] == g and (vyb_kava == VSETKY or polozky[s_]["kava"] == vyb_kava))
+            return sum(zostava_sku(s_) for s_ in pol if pol[s_]["gramaz"] == g and (vyb_kava == VSETKY or pol[s_]["kava"] == vyb_kava))
 
         f1, f2, f3, f4 = st.columns([1.6, 2, 1.6, 1.4], vertical_alignment="bottom")
         with f1:
@@ -1354,28 +1399,32 @@ with tab5:
                          format_func=lambda g: g if g == VSETKY else f"{g} g – zostáva {zost_gram(g)} ks")
         with f4:
             st.toggle("Aj hotové", key=k_hotove, help="Zobrazí aj položky, ktoré sú už celé v krabiciach")
+            st.toggle("Mimo objednávky", key=k_mimo, help="Náhrada alebo navyše: ponúkne všetko, čo je v regáli, aj keď to zákazník nemá objednané")
 
         zobrazene = sorted([s_ for s_ in kandidati
-                            if (vyb_kava == VSETKY or polozky[s_]["kava"] == vyb_kava)
-                            and (vyb_gram == VSETKY or polozky[s_]["gramaz"] == vyb_gram)],
-                           key=lambda s_: (polozky[s_]["kava"], polozky[s_]["gramaz"]))
+                            if (vyb_kava == VSETKY or pol[s_]["kava"] == vyb_kava)
+                            and (vyb_gram == VSETKY or pol[s_]["gramaz"] == vyb_gram)],
+                           key=lambda s_: (bool(pol[s_].get("mimo")), pol[s_]["kava"], pol[s_]["gramaz"]))
         cielova = st.session_state.get(k_krab, 0)
         st.caption(f"Pridávaš do: **{'Krabica č. ' + str(cielova + 1) if cielova < len(krabice) else '➕ Nová krabica č. ' + str(cielova + 1)}**")
 
         if not zobrazene:
             st.success("Pre tento filter už nič nezostáva – všetko je v krabiciach.")
         for s_ in zobrazene:
-            p_ = polozky[s_]
+            p_ = pol[s_]
             v_regali = int(regal.get(s_, 0))
             vyb = vybrane_spolu(r, s_)
-            max_mozne = max(0, min(p_["objednane"], v_regali))
+            max_mozne = limit_sku(s_)
             mozno_pridat = max(0, max_mozne - vyb)
+            je_mimo = bool(p_.get("mimo"))
             ca, cb, cc, cd = st.columns([3.2, 3, 1.5, 1.3], vertical_alignment="bottom")
             with ca:
-                st.markdown(f"{'✅' if vyb >= p_['objednane'] else '➡️'} **{p_['kava']} {p_['gramaz']}g**  \n<small>{s_}</small>", unsafe_allow_html=True)
+                ikona_r = "➕" if je_mimo else ("✅" if vyb >= p_['objednane'] else "➡️")
+                st.markdown(f"{ikona_r} **{p_['kava']} {p_['gramaz']}g**  \n<small>{s_}{' · mimo objednávky' if je_mimo else ''}</small>", unsafe_allow_html=True)
             with cb:
-                upoz = " · ⚠️ treba dobaliť" if mozno_pridat == 0 and vyb < p_["objednane"] else ""
-                st.markdown(f"Vybrané **{vyb} / {p_['objednane']}**  \n<small>v regáli {v_regali} · môžeš pridať {mozno_pridat}{upoz}</small>", unsafe_allow_html=True)
+                upoz = " · ⚠️ treba dobaliť" if (not je_mimo and mozno_pridat == 0 and vyb < p_["objednane"]) else ""
+                vyb_txt = f"Vybrané **{vyb}** (náhrada / navyše)" if je_mimo else f"Vybrané **{vyb} / {p_['objednane']}**"
+                st.markdown(f"{vyb_txt}  \n<small>v regáli {v_regali} · môžeš pridať {mozno_pridat}{upoz}</small>", unsafe_allow_html=True)
             with cc:
                 st.number_input("Počet (ks):", min_value=0, max_value=mozno_pridat, step=1,
                                 key=f"exp_pocet_{odb}_{s_}", disabled=mozno_pridat == 0)
@@ -1394,6 +1443,9 @@ with tab5:
                 prehlad.append({"": "✅" if vyb >= p["objednane"] else ("🟡" if vyb else "⏳"),
                                 "Káva": p["kava"], "Gramáž": p["gramaz"], "SKU": s_, "Objednané": p["objednane"],
                                 "Vybrané": vyb, "Zostáva": p["objednane"] - vyb, "V regáli": int(regal.get(s_, 0))})
+            for s_ in sorted(s_ for s_ in pol if pol[s_].get("mimo") and vybrane_spolu(r, s_) > 0):
+                prehlad.append({"": "➕", "Káva": pol[s_]["kava"], "Gramáž": pol[s_]["gramaz"], "SKU": s_, "Objednané": 0,
+                                "Vybrané": vybrane_spolu(r, s_), "Zostáva": 0, "V regáli": int(regal.get(s_, 0))})
             st.dataframe(pd.DataFrame(prehlad), hide_index=True, use_container_width=True)
 
         # ---------- OBSAH KRABÍC ----------
@@ -1415,15 +1467,31 @@ with tab5:
 
         st.divider()
         chyby = [f"{s_}: vybrané {vybrane_spolu(r, s_)} ks, v regáli je len {int(regal.get(s_, 0))} ks."
-                 for s_ in polozky if vybrane_spolu(r, s_) > int(regal.get(s_, 0))]
+                 for s_ in pol if vybrane_spolu(r, s_) > int(regal.get(s_, 0))]
         for ch in chyby: st.error(ch)
         plne_krabice = [k for k in krabice if k]
-        popis_btn = (f"🚚 Expedovať všetko ({vybrane_vsetko} ks, {len(plne_krabice)} krab.)" if vybrane_vsetko >= obj_spolu
-                     else f"🚚 Expedovať čiastočne ({vybrane_vsetko} z {obj_spolu} ks, {len(plne_krabice)} krab.)")
+        zvysok_ks = max(0, obj_spolu - vybrane_vsetko)
+        zrusit_zvysok = False
+        if zvysok_ks > 0 and (vybrane_vsetko + vybrane_mimo) > 0:
+            volba = st.radio(f"Čo so zvyškom objednávky ({zvysok_ks} ks), ktorý nejde v tejto zásielke?",
+                             ["Nechať otvorený – dobalíme a pošleme neskôr", "Zrušiť – zákazník dostane menej"],
+                             key=f"exp_zvysok_{odb}", horizontal=True)
+            zrusit_zvysok = volba.startswith("Zrušiť")
+            if zrusit_zvysok:
+                st.warning(f"Zvyšných {zvysok_ks} ks sa z objednávky natrvalo odstráni (zapíše sa do logu). Už zabalené sáčky ostanú v regáli ako voľný sklad.")
+        spolu_odoslat = vybrane_vsetko + vybrane_mimo
+        if zvysok_ks == 0:
+            popis_btn = f"🚚 Expedovať všetko ({spolu_odoslat} ks, {len(plne_krabice)} krab.)"
+        elif zrusit_zvysok:
+            popis_btn = f"🚚 Expedovať {spolu_odoslat} ks a zvyšok zrušiť ({len(plne_krabice)} krab.)"
+        else:
+            popis_btn = f"🚚 Expedovať čiastočne ({vybrane_vsetko} z {obj_spolu} ks, {len(plne_krabice)} krab.)"
+        if vybrane_mimo:
+            popis_btn += f" · +{vybrane_mimo} mimo obj."
         e1, e2 = st.columns([3, 1])
         with e1:
-            if st.button(popis_btn, key=f"exp_odosli_{odb}", type="primary", disabled=bool(chyby) or vybrane_vsetko == 0, use_container_width=True):
-                if not je_duplicitny_klik(f"exp_{odb}", vybrane_vsetko):
+            if st.button(popis_btn, key=f"exp_odosli_{odb}", type="primary", disabled=bool(chyby) or spolu_odoslat == 0, use_container_width=True):
+                if not je_duplicitny_klik(f"exp_{odb}", spolu_odoslat):
                     mnozstva = {}
                     for s_, p in polozky.items():
                         zostava = vybrane_spolu(r, s_)
@@ -1435,8 +1503,10 @@ with tab5:
                                              for j, k in enumerate(plne_krabice, start=1))
                     rozpr.pop(odb, None)
                     st.session_state.pop(k_krab, None)
-                    expeduj(odb, mnozstva, detail_extra=popis_krabic)
-                    st.session_state.msg_exp_hotovo = f"🚚 {odb}: odoslaných {vybrane_vsetko} ks v {len(plne_krabice)} krabiciach."
+                    mimo = {s_: vybrane_spolu(r, s_) for s_ in pol if pol[s_].get("mimo") and vybrane_spolu(r, s_) > 0}
+                    expeduj(odb, mnozstva, detail_extra=popis_krabic, mimo_objednavky=mimo, zrusit_zvysok=zrusit_zvysok)
+                    st.session_state.msg_exp_hotovo = (f"🚚 {odb}: odoslaných {spolu_odoslat} ks v {len(plne_krabice)} krabiciach."
+                                                       + (f" Zrušených {zvysok_ks} ks z objednávky." if zrusit_zvysok else ""))
                     st.rerun()
         with e2:
             st.button("🗑️ Zrušiť rozpracované", key=f"exp_zrus_{odb}", on_click=cb_zrus, args=(odb,),
