@@ -5,7 +5,7 @@ import io
 from datetime import datetime, timedelta
 import json
 
-st.set_page_config(page_title="Roastery Manager v4.0", page_icon="☕", layout="wide")
+st.set_page_config(page_title="Roastery Manager v4.1", page_icon="☕", layout="wide")
 
 # --- KONFIGURÁCIA Z TVOJHO KÓDU ---
 KAPACITA_ZELENA_BATCH = 5.0
@@ -155,6 +155,47 @@ def nacitaj_logy_z_google_sheets():
     except Exception as e:
         return []
 
+# FUNKCIA PRE DENNÍK PRAŽENIA
+def uloz_dennik_prazenia(nazov, davky, zelena_kg, uprazena_plan_kg, uprazena_real_kg, vypek_real_perc):
+    try:
+        import gspread
+        creds = get_google_credentials()
+        client = gspread.authorize(creds)
+        spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
+        try:
+            dennik_sheet = spreadsheet.worksheet("Dennik_Prazenia")
+        except:
+            dennik_sheet = spreadsheet.add_worksheet(title="Dennik_Prazenia", rows="1000", cols="7")
+            dennik_sheet.append_row(["Dátum", "Názov praženia", "Dávky", "Zelená (kg)", "Plán upraženej (kg)", "Skutočnosť upraženej (kg)", "Skutočný výpek (%)"])
+        
+        cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        dennik_sheet.append_row([cas_ulozenia, str(nazov), int(davky), round(zelena_kg, 2), round(uprazena_plan_kg, 2), round(uprazena_real_kg, 2), round(vypek_real_perc, 2)])
+        return True
+    except Exception as e:
+        return False
+
+# NOVÁ FUNKCIA: NAČÍTANIE HISTÓRIE PRE ŠTATISTIKY
+def nacitaj_dennik_prazenia():
+    try:
+        import gspread
+        creds = get_google_credentials()
+        client = gspread.authorize(creds)
+        spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
+        try:
+            dennik_sheet = spreadsheet.worksheet("Dennik_Prazenia")
+        except:
+            return pd.DataFrame() # Ešte neexistuje
+        zaznamy = dennik_sheet.get_all_values()
+        if len(zaznamy) > 1:
+            df = pd.DataFrame(zaznamy[1:], columns=zaznamy[0])
+            for col in ["Dávky", "Zelená (kg)", "Plán upraženej (kg)", "Skutočnosť upraženej (kg)", "Skutočný výpek (%)"]:
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',','.'), errors='coerce')
+            df['Dátum_sort'] = pd.to_datetime(df['Dátum'], format="%d.%m.%Y %H:%M:%S", errors='coerce')
+            return df
+        return pd.DataFrame()
+    except Exception as e:
+        return pd.DataFrame()
+
 # --- AUTO-LOAD PRI ŠTARTE ---
 if 'aktualne_objednavky' not in st.session_state:
     zaloha, cas, n_prazenia = nacitaj_z_google_sheets()
@@ -226,11 +267,12 @@ with st.sidebar:
                 )
 
 # --- HLAVNÉ ROZHRANIE ---
-st.title("☕ Roastery Manager v4.0")
+st.title("☕ Roastery Manager v4.1")
 
 st.text_input("📅 Názov aktuálneho praženia (Tento názov si systém pamätá, neprepisuj ho každý deň):", key="nazov_prazenia", on_change=auto_uloz)
 
-tab1, tab2 = st.tabs(["🛒 1. Objednávky a Praženie", "📦 2. Kontrola balenia a Export"])
+# PRIDANÁ TRETIA ZÁLOŽKA
+tab1, tab2, tab3 = st.tabs(["🛒 1. Objednávky a Praženie", "📦 2. Kontrola balenia a Export", "📊 3. Štatistiky a Denník"])
 
 # ========================================================
 # TAB 1: OBJEDNÁVKY A PRAŽENIE
@@ -256,7 +298,6 @@ with tab1:
 
     st.subheader("☁️ Spoločná zdieľaná pamäť (Braňo / Majo)")
     
-    # Hlášky sú bezpečne VYŇATÉ von zo stĺpcov, aby apka nikdy nezamrzla!
     if st.session_state.pop('msg_uspech', False):
         st.success("✅ Dáta úspešne načítané!")
     if st.session_state.pop('msg_chyba', False):
@@ -357,7 +398,6 @@ with tab1:
         st.subheader("🛒 Aktuálne objednávky")
         if st.session_state.aktualne_objednavky:
             try:
-                # Ochrana pre plynulý beh
                 df_objednavky_vstup = pd.DataFrame(st.session_state.aktualne_objednavky)
                 upravene_df = st.data_editor(df_objednavky_vstup, use_container_width=True, num_rows="fixed", hide_index=False, key="tabulka_objednavok")
                 
@@ -419,7 +459,6 @@ with tab1:
                 df_plan = pd.DataFrame(finalny_plan)
                 st.dataframe(df_plan, use_container_width=True, hide_index=True)
                 
-                # --- PRIDANÝ SÚČET DO UI ---
                 celkovo_davok = int(df_plan['Dávky (á 5kg)'].sum())
                 celkova_zelena = df_plan['Navážiť zelenú (kg)'].sum()
                 celkova_uprazena = celkova_zelena * (1 - (STANDARDNY_VYPEK / 100.0))
@@ -427,7 +466,19 @@ with tab1:
                 st.markdown(f"### 🔥 Celkový počet pražení: **{celkovo_davok} dávok**")
                 st.markdown(f"### ⚖️ Spolu: **{celkova_zelena:.1f} kg** zelenej ➡️ **{celkova_uprazena:.1f} kg** upraženej (Plán)")
                 
-                # --- PRIDANÝ SÚČTOVÝ RIADOK DO EXCELU ---
+                st.divider()
+                st.markdown("#### 📓 Denník praženia (Skutočnosť po upražení)")
+                skutocna_vaha = st.number_input("Koľko kíl upraženej kávy si reálne navážil po víkende? (kg):", min_value=0.0, step=0.1, format="%.1f")
+                if skutocna_vaha > 0:
+                    skutocny_vypek = (1 - (skutocna_vaha / celkova_zelena)) * 100 if celkova_zelena > 0 else 0
+                    st.info(f"Tvoj skutočný výpek je **{skutocny_vypek:.1f} %**")
+                    if st.button("💾 Uložiť finálny záznam do Denníka praženia", type="primary"):
+                        if uloz_dennik_prazenia(st.session_state.nazov_prazenia, celkovo_davok, celkova_zelena, celkova_uprazena, skutocna_vaha, skutocny_vypek):
+                            st.success("Záznam bol úspešne uložený do Štatistík!")
+                        else:
+                            st.error("Chyba pri ukladaní do denníka.")
+                st.divider()
+
                 total_row_plan = {"Zelené zrno": "🔥 SPOLU:", "Potrebné upražiť (kg)": round(celkova_uprazena, 2), "Dávky (á 5kg)": celkovo_davok, "Navážiť zelenú (kg)": round(celkova_zelena, 2), "Zostatok (kg upraž.)": ""}
                 df_plan_excel = pd.concat([df_plan, pd.DataFrame([total_row_plan])], ignore_index=True)
                 
@@ -727,3 +778,49 @@ with tab2:
                 st.error("Chyba pri generovaní exportu.")
     else:
         st.info("Zoznam je prázdny. Pridaj objednávky v záložke 1.")
+
+# ========================================================
+# TAB 3: ŠTATISTIKY A DENNÍK
+# ========================================================
+with tab3:
+    st.subheader("📊 História a Štatistiky praženia")
+    st.write("Tu vidíš všetky tvoje finálne potvrdené praženia (tie, ktoré si uložil cez tlačidlo 'Uložiť záznam do Denníka praženia').")
+    
+    if st.button("🔄 Načítať históriu pražení z Cloudu", type="primary", use_container_width=True):
+        df_dennik = nacitaj_dennik_prazenia()
+        if not df_dennik.empty:
+            st.session_state.df_dennik = df_dennik
+        else:
+            st.warning("Denník praženia je zatiaľ prázdny alebo sa ho nepodarilo načítať.")
+            
+    if 'df_dennik' in st.session_state and not st.session_state.df_dennik.empty:
+        df_d = st.session_state.df_dennik
+        
+        st.markdown("#### Všetky praženia (Podrobný denník)")
+        st.dataframe(df_d.drop(columns=['Dátum_sort'], errors='ignore'), use_container_width=True, hide_index=True)
+        
+        st.divider()
+        
+        st.markdown("#### 📅 Súhrn po mesiacoch")
+        df_m = df_d.copy()
+        # Vytvoríme čistý mesiac z pomocného dátumového stĺpca
+        df_m['Mesiac_Zoradenie'] = df_m['Dátum_sort'].dt.to_period('M')
+        df_m['Mesiac'] = df_m['Dátum_sort'].dt.strftime('%m / %Y')
+        
+        sumar_mesiac = df_m.groupby(['Mesiac_Zoradenie', 'Mesiac']).agg({
+            'Dávky': 'sum',
+            'Zelená (kg)': 'sum',
+            'Skutočnosť upraženej (kg)': 'sum'
+        }).reset_index().sort_values('Mesiac_Zoradenie', ascending=False)
+        
+        sumar_mesiac = sumar_mesiac.drop(columns=['Mesiac_Zoradenie'])
+        sumar_mesiac.rename(columns={'Zelená (kg)': 'Spolu Zelená (kg)', 'Skutočnosť upraženej (kg)': 'Spolu Upražená (kg)', 'Dávky': 'Spolu Dávok'}, inplace=True)
+        
+        st.dataframe(sumar_mesiac, use_container_width=True, hide_index=True)
+        
+        excel_buffer_stat = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer_stat, engine='xlsxwriter') as writer:
+            df_d.drop(columns=['Dátum_sort'], errors='ignore').to_excel(writer, index=False, sheet_name='Historia_Prazeni')
+            sumar_mesiac.to_excel(writer, index=False, sheet_name='Sumar_Mesiace')
+            
+        st.download_button("💾 Stiahnuť Excel so štatistikami (lokálne)", data=excel_buffer_stat.getvalue(), file_name=f"Kikiriki_Statistiky_{DNESNY_DATUM}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
