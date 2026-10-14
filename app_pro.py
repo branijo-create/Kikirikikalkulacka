@@ -10,7 +10,7 @@ import json
 st.set_page_config(page_title="Kikiriki Roastery PRO", page_icon="☕", layout="wide")
 
 # ==========================================
-# 🎨 FIREMNÝ DIZAJN (NEMENNÝ STAV)
+# 🎨 FIREMNÝ DIZAJN (FIX MODRÝCH TLAČIDIEL)
 # ==========================================
 firemny_dizajn = """
 <style>
@@ -36,24 +36,33 @@ firemny_dizajn = """
         font-size: 2.2rem !important;
     }
 
-    div[data-testid="stTabs"] button {
+    /* PRESNÉ ZACIELENIE LEN NA HLAVIČKY ZÁLOŽIEK (TABS) */
+    button[role="tab"] {
         padding: 8px 20px !important;
     }
 
-    div[data-testid="stTabs"] button p,
-    div[data-testid="stTabs"] button strong {
+    button[role="tab"] p,
+    button[role="tab"] strong {
         font-family: 'Barlow Condensed', sans-serif !important;
         font-size: 1.35rem !important;
         font-weight: 800 !important;
         letter-spacing: 0.8px !important;
         color: #2B5098 !important;
+        text-transform: uppercase !important;
     }
 
-    div[data-testid="stTabs"] button[aria-selected="true"] {
+    button[role="tab"][aria-selected="true"] {
         border-bottom: 3px solid #2B5098 !important;
     }
 
-    .stDataFrame, th, td, .stButton>button {
+    /* OPRAVA: VYNÚTENIE BIELEHO TEXTU PRE PRIMÁRNE (MODRÉ) TLAČIDLÁ */
+    button[kind="primary"] p {
+        color: #FFFFFF !important;
+        font-weight: 700 !important;
+    }
+
+    /* Vylepšenie tlačidiel a tabuliek */
+    .stDataFrame, th, td {
         font-weight: 600 !important;
     }
 </style>
@@ -100,7 +109,6 @@ def nacitaj_z_google_sheets():
         creds = get_google_credentials()
         client = gspread.authorize(creds)
         
-        # Ošetrenie chýbajúceho hárka
         try: 
             spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
         except gspread.exceptions.SpreadsheetNotFound:
@@ -110,7 +118,6 @@ def nacitaj_z_google_sheets():
         sheet = spreadsheet.sheet1
         hodnoty = sheet.row_values(1)
         
-        # Ošetrenie prázdnych dát
         val_data = hodnoty[0] if len(hodnoty) > 0 else None
         val_cas = hodnoty[1] if len(hodnoty) > 1 else "Neznámy čas"
         val_nazov = hodnoty[2] if len(hodnoty) > 2 else ""
@@ -120,13 +127,11 @@ def nacitaj_z_google_sheets():
         else:
             data = {"objednavky": [], "prazenie": {}}
             
-        # Zabezpečenie správnej štruktúry pre staršie zálohy
         if isinstance(data, list): 
             data = {"objednavky": data, "prazenie": {}}
             
         return data, val_cas, val_nazov
     except Exception as e:
-        # Vráti presnú chybu, ak sa niečo pokazí
         return None, str(e), None
 
 def uloz_do_google_sheets(data_dict, nazov_prazenia):
@@ -138,13 +143,11 @@ def uloz_do_google_sheets(data_dict, nazov_prazenia):
         sheet1 = spreadsheet.sheet1
         cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         
-        # ZLÚČENIE DO JEDNÉHO API VOLANIA (Zabraňuje prekročeniu limitov Google)
         hodnoty = [[json.dumps(data_dict, ensure_ascii=False), cas_ulozenia, str(nazov_prazenia)]]
         
         try:
             sheet1.update(values=hodnoty, range_name='A1:C1')
         except TypeError:
-            # Fallback pre staršie verzie knižnice gspread
             sheet1.update('A1:C1', hodnoty)
             
         return True, None
@@ -159,9 +162,8 @@ def auto_uloz():
     }
     uspech, chyba = uloz_do_google_sheets(data_na_ulozenie, aktualny_nazov)
     
-    # Viditeľná notifikácia pri tichom zlyhaní!
     if not uspech:
-        st.toast(f"⚠️ Zlyhalo automatické ukladanie: {chyba}", icon="❌")
+        st.toast(f"⚠️ Zlyhalo ukladanie (skontroluj miesto na Google Disku): {chyba}", icon="❌")
 
 def nacitaj_vsetko_z_cloudu_callback():
     zaloha_dict, cas_poslednej_upravy, n_prazenia = nacitaj_z_google_sheets()
@@ -188,7 +190,7 @@ if 'aktualne_objednavky' not in st.session_state:
     else:
         st.session_state.aktualne_objednavky = []
         st.session_state.priebeh_prazenia = {}
-        st.session_state.info_cloud = f"Záloha nenájdená. Začíname s čistým stolom. (Detail: {cas})"
+        st.session_state.info_cloud = f"Chyba spojenia s Google Diskom (skontrolujte pamäť). Detail: {cas}"
         
     st.session_state.pociatocny_nazov = n_prazenia if n_prazenia else f"Prazenie_PRO_{DNESNY_DATUM}"
 
@@ -203,7 +205,7 @@ col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 7.2 | Výrobný manažment (Fix Cloudu)")
+    st.caption("Verzia 7.3 | Výrobný manažment")
 
 with col_head_right:
     if os.path.exists("logo.png"):
@@ -225,7 +227,7 @@ with col_head_right:
 st.text_input("Identifikátor praženia:", key="nazov_prazenia", on_change=auto_uloz)
 
 # ========================================================
-# 🚀 ZÁLOŽKY 
+# 🚀 ZÁLOŽKY PRIAMO S BOLDOM
 # ========================================================
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "**OBJEDNÁVKY**", 
@@ -250,7 +252,7 @@ with tab1:
     if st.session_state.pop('msg_uspech', False):
         st.success("Dáta úspešne stiahnuté a zosynchronizované.")
     if st.session_state.pop('msg_chyba', False):
-        st.error("Nepodarilo sa načítať zálohu z Cloudu.")
+        st.error("Nepodarilo sa načítať zálohu z Cloudu (Zrejme je plný Google Disk).")
 
     col_load, col_save = st.columns(2)
     with col_load:
@@ -259,7 +261,7 @@ with tab1:
             st.rerun()
 
     with col_save:
-        if st.button("Vynútiť uloženie do Cloudu", type="primary", use_container_width=True):
+        if st.button("Uložiť aktuálny stav do Cloudu", type="primary", use_container_width=True):
             auto_uloz()
             cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
             aktivne = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
