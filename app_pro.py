@@ -68,9 +68,8 @@ firemny_dizajn = """
     
     /* Vylepšenie textu v expanderoch (pražiareň) pre lepšiu čitateľnosť */
     .streamlit-expanderHeader p {
-        font-family: 'Barlow Condensed', sans-serif !important;
-        font-size: 1.2rem !important;
-        font-weight: 700 !important;
+        font-family: 'Barlow', sans-serif !important;
+        font-size: 1.15rem !important;
         color: #2B5098 !important;
     }
 </style>
@@ -198,7 +197,7 @@ col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 6.3 | Výrobný manažment")
+    st.caption("Verzia 6.4 | Výrobný manažment")
 
 with col_head_right:
     logo_html = """
@@ -487,7 +486,7 @@ with tab1:
                 )
 
 # ========================================================
-# TAB 2: PRAŽIAREŇ (Zväčšené, tučné nadpisy káv)
+# TAB 2: PRAŽIAREŇ (Pôvodný tvar, tučné názvy káv a batchov)
 # ========================================================
 with tab2:
     st.markdown("### Panel pri stroji")
@@ -522,9 +521,9 @@ with tab2:
             
             stav = st.session_state.priebeh_prazenia.get(zrno, {"hotovo": False, "zelena_real": 0.0, "uprazena_real": 0.0})
             
-            # Zväčšený a vyhrubený názov kávy v expanderi
-            stav_text = "HOTOVO" if stav['hotovo'] else "NA RADE"
-            expander_title = f"{stav_text}: {zrno.upper()}  —  {davky_plan} BATCHOV"
+            # Pôvodný tvar + tučný názov kávy a počet batchov cez Markdown (ikonu/štát ponecháme)
+            stav_text = "✅ Hotovo" if stav['hotovo'] else "⏳ Na rade:"
+            expander_title = f"{stav_text} **{zrno}** ({davky_plan} batchov)"
             
             with st.expander(expander_title, expanded=not stav['hotovo']):
                 col_info, col_input = st.columns([1, 1])
