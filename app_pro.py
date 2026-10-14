@@ -250,7 +250,7 @@ col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 8.1 | Výrobný manažment")
+    st.caption("Verzia 8.2 | Výrobný manažment")
 
 with col_head_right:
     if os.path.exists("logo.png"):
@@ -407,7 +407,18 @@ with tab1:
             if 'Sudy' not in df_objednavky_vstup.columns: df_objednavky_vstup['Sudy'] = False
             df_objednavky_vstup['Sudy'] = df_objednavky_vstup['Sudy'].fillna(False).astype(bool)
             
-            upravene_df = st.data_editor(df_objednavky_vstup, use_container_width=True, num_rows="fixed", hide_index=False, key="tabulka_objednavok")
+            # OPRAVA VIZUÁLU: Úprava zobrazenia stĺpcov pre lepšie pochopenie
+            upravene_df = st.data_editor(
+                df_objednavky_vstup, 
+                use_container_width=True, 
+                num_rows="fixed", 
+                hide_index=False, 
+                key="tabulka_objednavok",
+                column_config={
+                    "Kusy": st.column_config.NumberColumn("Obj. (ks)"),
+                    "Potvrdene": st.column_config.CheckboxColumn("Vybavené (Hotovo)")
+                }
+            )
             novy_stav = upravene_df.to_dict('records')
             
             for item in novy_stav:
@@ -662,16 +673,25 @@ with tab3:
     if not aktivne_balenie:
         st.info("Žiadne položky na balenie.")
     else:
-        # SUMÁR OBALOV (Prípravovňa)
+        # SUMÁR OBALOV (Prípravovňa) OPRAVENÉ NÁZVY
         if cakajuce:
             st.markdown("#### 🏷️ Prípravovňa (Potrebné obaly a etikety pre čakajúce)")
             df_cak = pd.DataFrame(cakajuce)
             sum_pivot_tab3 = df_cak.groupby(['Káva', 'Gramáž'])['Kusy'].sum().reset_index()
             sum_pivot_tab3 = sum_pivot_tab3.pivot(index='Káva', columns='Gramáž', values='Kusy').fillna(0).astype(int)
+            
             for g in [220, 500, 1000]:
                 if g not in sum_pivot_tab3.columns: sum_pivot_tab3[g] = 0
-            sum_pivot_tab3['Spolu'] = sum_pivot_tab3.sum(axis=1)
-            sum_pivot_tab3 = sum_pivot_tab3[['Spolu', 220, 500, 1000]]
+                
+            # Správny názov pre súčet etikiet v riadkoch
+            sum_pivot_tab3['Etikety spolu'] = sum_pivot_tab3[[220, 500, 1000]].sum(axis=1)
+            
+            # Pridanie spodného sumárneho riadku pre všetky obaly
+            sum_pivot_tab3.loc['📦 OBALY SPOLU'] = sum_pivot_tab3.sum(numeric_only=True)
+            
+            # Preusporiadanie stĺpcov, aby etikety boli prvé
+            sum_pivot_tab3 = sum_pivot_tab3[['Etikety spolu', 220, 500, 1000]]
+            
             st.dataframe(sum_pivot_tab3, use_container_width=True)
             st.divider()
 
