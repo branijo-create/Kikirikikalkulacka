@@ -502,7 +502,7 @@ def vynuluj_policka(): st.session_state.form_key += 1
 col_head_left, col_head_right = st.columns([3, 1])
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 8.9 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 9.0 | Výroba, Sklad & ERP Kódy")
 with col_head_right:
     if os.path.exists("logo.png"): st.image("logo.png", width=110)
     elif os.path.exists("logo.svg"): st.image("logo.svg", width=110)
@@ -910,8 +910,8 @@ with tab3:
                     with col2:
                         if chýba_ks > 0:
                             with st.form(key=f"form_bag_{p['kava']}_{p['gramaz']}", clear_on_submit=True):
-                                pocet_ks = st.number_input("Odložiť do regálu (ks):", min_value=0, value=0, step=1, key=f"add_bag_{p['kava']}_{p['gramaz']}")
-                                odoslat = st.form_submit_button("✅ Odložiť", use_container_width=True)
+                                pocet_ks = st.number_input("Počet sáčkov (ks):", min_value=0, value=0, step=1, key=f"add_bag_{p['kava']}_{p['gramaz']}")
+                                odoslat = st.form_submit_button("✅ Potvrdiť", use_container_width=True)
                             if odoslat and pocet_ks > 0:
                                 if je_duplicitny_klik(f"bag_{p['kava']}_{p['gramaz']}", int(pocet_ks)):
                                     st.warning("Dvojklik zachytený – započítané len raz.")
@@ -922,139 +922,160 @@ with tab3:
                                     st.rerun()
 
 # ========================================================
-# TAB 4: SKLAD (Trezor a Inventúra)
+# TAB 4: SKLAD (GC / RC / Výrobky + Inventúra, Log, Obnova)
 # ========================================================
+def gramaz_z_pc(sku):
+    try: return int(sku[2:sku.index("-")])
+    except Exception: return 0
+
+def zafarbi_zaporne(v):
+    try: return "color: #C0392B; font-weight: 800;" if float(v) < 0 else ""
+    except Exception: return ""
+
+def inventura_editor(typ, jednotka, akcia, odomknute):
+    if not odomknute:
+        st.caption("🔒 Inventúru odomkneš heslom v hornej časti záložky Sklad.")
+        return
+    with st.expander("🔒 Inventúra – ručne prepísať stav", expanded=False):
+        st.warning("Úpravou v tabuľke natvrdo prepíšeš evidenčné stavy. Zmena sa zapíše do logu aj histórie.")
+        je_ks = typ == "zabalena"
+        riadky = []
+        for sku, hodnota in st.session_state.sklad[typ].items():
+            h = int(hodnota) if je_ks else round(float(hodnota), 2)
+            riadky.append({"SKU": sku, "Názov": nazov_sku(typ, sku), f"Systém ({jednotka})": h, f"Fyzicky ({jednotka})": h})
+        ed = st.data_editor(pd.DataFrame(riadky), hide_index=True, use_container_width=True,
+                            disabled=["SKU", "Názov", f"Systém ({jednotka})"], key=f"inv_editor_{typ}")
+        if st.button(f"⚠️ Potvrdiť inventúru – {akcia}", type="primary", key=f"inv_btn_{typ}"):
+            sklad_pred = copy.deepcopy(st.session_state.sklad)
+            for row in ed.to_dict("records"):
+                hodnota = row[f"Fyzicky ({jednotka})"]
+                st.session_state.sklad[typ][row["SKU"]] = int(hodnota) if je_ks else float(hodnota)
+            auto_uloz(historia=True, akcia=f"Inventúra – {akcia}", detail="Ručná korekcia stavu", sklad_pred=sklad_pred)
+            st.rerun()
+
 with tab4:
-    st.markdown("### Aktuálny stav Skladu")
-    
-    col_dozy, col_sacky = st.columns(2)
-    with col_dozy:
-        st.markdown("#### 🛢️ Fyzické Dózy (kg)")
-        st.caption("Pevný stav upraženej kávy (Kód RC).")
-        for sku, vaha in st.session_state.sklad["uprazena"].items():
-            if vaha != 0:
-                nazov = NAZVY_UPRAZENA.get(sku, "Neznáme")
-                st.metric(label=f"{sku} - {nazov}", value=f"{vaha:.2f} kg", delta_color="normal" if vaha>=0 else "inverse")
-                
-    with col_sacky:
-        st.markdown("#### 🛍️ Regál so sáčkami (ks)")
-        st.caption("Hotové sáčky čakajúce na Kuriéra (Kód PC).")
-        ma_sacky = False
-        for sku, ks in st.session_state.sklad["zabalena"].items():
-            if ks > 0:
-                ma_sacky = True
-                st.markdown(f"**{sku}**: {ks} ks")
-        if not ma_sacky: st.info("Regál je prázdny.")
+    st.markdown("### Sklad")
 
-    st.divider()
-    st.markdown("### 🔒 Zabezpečená zóna: Inventúra")
-    heslo_inv = st.text_input("Pre úpravu fyzického skladu zadaj heslo:", type="password", key="heslo_inv")
+    heslo_inv = st.text_input("🔒 Heslo pre inventúru, log a obnovu:", type="password", key="heslo_inv")
     vysledok_hesla = over_heslo(heslo_inv) if heslo_inv else False
-
+    odomknute = vysledok_hesla is True
     if vysledok_hesla is None:
-        st.warning("Heslo pre inventúru nie je nastavené v Secrets (kľúč `inventura_heslo`). Inventúra je zamknutá.")
-    elif vysledok_hesla:
-        st.success("Trezor Skladu odomknutý. Úpravou v tabuľke natvrdo prepíšeš evidenčné stavy.")
-        tab_inv_g, tab_inv_r, tab_inv_p, tab_log, tab_obnova = st.tabs(["**Zelená káva (Vrecia)**", "**Upražená káva (Dózy)**", "**Zabalená káva (Regál)**", "**📜 Log**", "**⏪ Obnova**"])
-
-        with tab_inv_g:
-            df_g = []
-            for sku, hodnota in st.session_state.sklad["zelena"].items():
-                df_g.append({"Kód (SKU)": sku, "Názov": NAZVY_ZELENA.get(sku, ""), "Systém (kg)": round(hodnota, 2), "Fyzicky_navážené_(kg)": round(hodnota, 2)})
-            
-            ed_g = st.data_editor(pd.DataFrame(df_g), hide_index=True, disabled=["Kód (SKU)", "Názov", "Systém (kg)"], use_container_width=True)
-            if st.button("⚠️ Potvrdiť inventúru Zelenej kávy", type="primary"):
-                sklad_pred = copy.deepcopy(st.session_state.sklad)
-                for row in ed_g.to_dict('records'):
-                    st.session_state.sklad["zelena"][row["Kód (SKU)"]] = row["Fyzicky_navážené_(kg)"]
-                auto_uloz(historia=True, akcia="Inventúra – Zelená", detail="Ručná korekcia stavu", sklad_pred=sklad_pred)
-                st.rerun()
-
-        with tab_inv_r:
-            df_r = []
-            for sku, hodnota in st.session_state.sklad["uprazena"].items():
-                df_r.append({"Kód (SKU)": sku, "Názov": NAZVY_UPRAZENA.get(sku, ""), "Systém (kg)": round(hodnota, 2), "Fyzicky_navážené_(kg)": round(hodnota, 2)})
-            
-            ed_r = st.data_editor(pd.DataFrame(df_r), hide_index=True, disabled=["Kód (SKU)", "Názov", "Systém (kg)"], use_container_width=True)
-            if st.button("⚠️ Potvrdiť inventúru Upraženej kávy (Dóz)", type="primary"):
-                sklad_pred = copy.deepcopy(st.session_state.sklad)
-                for row in ed_r.to_dict('records'):
-                    st.session_state.sklad["uprazena"][row["Kód (SKU)"]] = row["Fyzicky_navážené_(kg)"]
-                auto_uloz(historia=True, akcia="Inventúra – Dózy", detail="Ručná korekcia stavu", sklad_pred=sklad_pred)
-                st.rerun()
-
-        with tab_inv_p:
-            df_p = []
-            for sku, ks in st.session_state.sklad["zabalena"].items():
-                df_p.append({"Kód (SKU)": sku, "Systém (ks)": int(ks), "Fyzicky_na_regáli_(ks)": int(ks)})
-            
-            ed_p = st.data_editor(pd.DataFrame(df_p), hide_index=True, disabled=["Kód (SKU)", "Systém (ks)"], use_container_width=True)
-            if st.button("⚠️ Potvrdiť inventúru Zabalených sáčkov", type="primary"):
-                sklad_pred = copy.deepcopy(st.session_state.sklad)
-                for row in ed_p.to_dict('records'):
-                    st.session_state.sklad["zabalena"][row["Kód (SKU)"]] = row["Fyzicky_na_regáli_(ks)"]
-                auto_uloz(historia=True, akcia="Inventúra – Regál", detail="Ručná korekcia stavu", sklad_pred=sklad_pred)
-                st.rerun()
-
-        with tab_log:
-            st.caption("Každá akcia v appke = riadok v liste „Log“ v Google tabuľke. Najnovšie hore.")
-            if st.button("Načítať / obnoviť log", key="btn_log"):
-                try:
-                    st.session_state.log_df = nacitaj_log()
-                except Exception as e:
-                    st.error(f"Log sa nepodarilo načítať: {e}")
-            df_log = st.session_state.get("log_df")
-            if df_log is not None:
-                if df_log.empty:
-                    st.info("Log je zatiaľ prázdny.")
-                else:
-                    col_f1, col_f2 = st.columns(2)
-                    with col_f1:
-                        filtr_akcia = st.multiselect("Akcia:", sorted(df_log["Akcia"].unique()), key="filtr_akcia")
-                    with col_f2:
-                        filtr_text = st.text_input("Hľadať (SKU, názov, odberateľ…):", key="filtr_text")
-                    df_view = df_log
-                    if filtr_akcia:
-                        df_view = df_view[df_view["Akcia"].isin(filtr_akcia)]
-                    if filtr_text:
-                        maska = df_view.apply(lambda r: filtr_text.lower() in " ".join(r.astype(str)).lower(), axis=1)
-                        df_view = df_view[maska]
-                    st.caption(f"Zobrazených {min(len(df_view), 2000)} z {len(df_view)} riadkov.")
-                    st.dataframe(df_view.head(2000), use_container_width=True, hide_index=True, height=500)
-                    st.download_button("Stiahnuť log (.csv)", data=df_view.to_csv(index=False).encode("utf-8-sig"),
-                                       file_name=f"Kikiriki_Log_{DNESNY_DATUM}.csv", mime="text/csv")
-
-        with tab_obnova:
-            st.caption("Vráti appku do stavu z vybraného snapshotu. Aktuálny stav sa pred obnovou automaticky uloží do histórie, takže obnova sa dá vrátiť.")
-            msg = st.session_state.pop("msg_obnova", None)
-            if msg:
-                (st.success if msg[0] == "success" else st.error)(msg[1])
-            if st.button("Načítať zoznam záloh", key="btn_hist"):
-                try:
-                    st.session_state.historia_zoznam = nacitaj_historiu()
-                except Exception as e:
-                    st.error(f"Históriu sa nepodarilo načítať: {e}")
-            zoznam = st.session_state.get("historia_zoznam", [])
-            if zoznam:
-                idx = st.selectbox("Vyber snapshot:", options=list(range(len(zoznam))),
-                                   format_func=lambda i: f"{zoznam[i]['cas']} | {zoznam[i]['nazov']}", key="vyber_zalohy")
-                try:
-                    nahlad = json.loads(zoznam[idx]["data"])
-                    obj = nahlad.get("objednavky", []) if isinstance(nahlad, dict) else nahlad
-                    sklad_n = nahlad.get("sklad", {}) if isinstance(nahlad, dict) else {}
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Objednávky", len([o for o in obj if not o.get("❌ Zmazať")]))
-                    c2.metric("Zelená spolu", f"{sum(sklad_n.get('zelena', {}).values()):.1f} kg")
-                    c3.metric("Sáčky v regáli", int(sum(sklad_n.get('zabalena', {}).values())))
-                except Exception:
-                    st.warning("Náhľad tohto snapshotu sa nedá zobraziť.")
-                st.checkbox("Rozumiem, že prepíšem aktuálny stav appky týmto snapshotom.", key="potvrdenie_obnovy")
-                st.button("⏪ Obnoviť tento stav", type="primary", disabled=not st.session_state.get("potvrdenie_obnovy", False),
-                          on_click=obnov_zo_zalohy_callback)
-            elif "historia_zoznam" in st.session_state:
-                st.info("História je zatiaľ prázdna.")
-    elif heslo_inv != "":
+        st.warning("Heslo nie je nastavené v Secrets (kľúč `inventura_heslo`). Inventúra, log a obnova sú zamknuté.")
+    elif heslo_inv and not odomknute:
         st.error("Nesprávne heslo.")
+    elif odomknute:
+        st.success("Odomknuté: inventúra v každej podzáložke, log a obnova nižšie.")
+
+    tab_gc, tab_rc, tab_pc = st.tabs(["**GC – Zelená káva**", "**RC – Upražená (dózy)**", "**Výrobky – Sáčky**"])
+
+    # ---------- GC ----------
+    with tab_gc:
+        st.caption("Zelená káva vo vreciach. Stav sa napĺňa inventúrou, praženie ho automaticky znižuje.")
+        df_gc = pd.DataFrame([{"SKU": sku, "Názov": NAZVY_ZELENA.get(sku, ""), "Stav (kg)": round(float(v), 2)}
+                              for sku, v in st.session_state.sklad["zelena"].items()])
+        c1, c2 = st.columns(2)
+        c1.metric("Zelená spolu", f"{df_gc['Stav (kg)'].sum():.2f} kg")
+        c2.metric("Druhov na sklade", int((df_gc["Stav (kg)"] > 0).sum()))
+        st.dataframe(df_gc.style.map(zafarbi_zaporne, subset=["Stav (kg)"]).format({"Stav (kg)": "{:.2f}"}),
+                     use_container_width=True, hide_index=True)
+        inventura_editor("zelena", "kg", "GC Zelená", odomknute)
+
+    # ---------- RC ----------
+    with tab_rc:
+        st.caption("Upražená, zatiaľ nezabalená káva v dózach. Praženie pridáva, balenie odoberá.")
+        df_rc = pd.DataFrame([{"SKU": sku, "Názov": NAZVY_UPRAZENA.get(sku, ""), "Stav (kg)": round(float(v), 2)}
+                              for sku, v in st.session_state.sklad["uprazena"].items()])
+        c1, c2 = st.columns(2)
+        c1.metric("V dózach spolu", f"{df_rc['Stav (kg)'].sum():.2f} kg")
+        c2.metric("Plných dóz", int((df_rc["Stav (kg)"] > 0).sum()))
+        st.dataframe(df_rc.style.map(zafarbi_zaporne, subset=["Stav (kg)"]).format({"Stav (kg)": "{:.2f}"}),
+                     use_container_width=True, hide_index=True)
+        inventura_editor("uprazena", "kg", "RC Dózy", odomknute)
+
+    # ---------- VÝROBKY ----------
+    with tab_pc:
+        st.caption("Hotové zabalené sáčky na sklade. Balenie pridáva, expedícia odoberá.")
+        rows_pc = []
+        for sku, ks in st.session_state.sklad["zabalena"].items():
+            g = gramaz_z_pc(sku)
+            rows_pc.append({"SKU": sku, "Názov": NAZVY_ZABALENA.get(sku, ""), "Gramáž": g, "Stav (ks)": int(ks), "Váha (kg)": round(int(ks) * g / 1000.0, 2)})
+        df_pc = pd.DataFrame(rows_pc)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Sáčkov spolu", int(df_pc["Stav (ks)"].sum()))
+        c2.metric("Váha spolu", f"{df_pc['Váha (kg)'].sum():.2f} kg")
+        c3.metric("Výrobkov na sklade", int((df_pc["Stav (ks)"] > 0).sum()))
+        aj_nulove = st.toggle("Zobraziť aj výrobky s nulovým stavom", value=False, key="pc_aj_nulove")
+        df_pc_view = df_pc if aj_nulove else df_pc[df_pc["Stav (ks)"] != 0]
+        if df_pc_view.empty:
+            st.info("Na sklade nie sú žiadne zabalené sáčky.")
+        else:
+            st.dataframe(df_pc_view.style.map(zafarbi_zaporne, subset=["Stav (ks)", "Váha (kg)"]).format({"Váha (kg)": "{:.2f}"}),
+                         use_container_width=True, hide_index=True)
+        inventura_editor("zabalena", "ks", "Výrobky", odomknute)
+
+    if odomknute:
+        st.divider()
+        st.markdown("### 🔒 Log a obnova")
+        tab_log, tab_obnova = st.tabs(["**📜 Log**", "**⏪ Obnova**"])
+
+    with tab_log:
+        st.caption("Každá akcia v appke = riadok v liste „Log“ v Google tabuľke. Najnovšie hore.")
+        if st.button("Načítať / obnoviť log", key="btn_log"):
+            try:
+                st.session_state.log_df = nacitaj_log()
+            except Exception as e:
+                st.error(f"Log sa nepodarilo načítať: {e}")
+        df_log = st.session_state.get("log_df")
+        if df_log is not None:
+            if df_log.empty:
+                st.info("Log je zatiaľ prázdny.")
+            else:
+                col_f1, col_f2 = st.columns(2)
+                with col_f1:
+                    filtr_akcia = st.multiselect("Akcia:", sorted(df_log["Akcia"].unique()), key="filtr_akcia")
+                with col_f2:
+                    filtr_text = st.text_input("Hľadať (SKU, názov, odberateľ…):", key="filtr_text")
+                df_view = df_log
+                if filtr_akcia:
+                    df_view = df_view[df_view["Akcia"].isin(filtr_akcia)]
+                if filtr_text:
+                    maska = df_view.apply(lambda r: filtr_text.lower() in " ".join(r.astype(str)).lower(), axis=1)
+                    df_view = df_view[maska]
+                st.caption(f"Zobrazených {min(len(df_view), 2000)} z {len(df_view)} riadkov.")
+                st.dataframe(df_view.head(2000), use_container_width=True, hide_index=True, height=500)
+                st.download_button("Stiahnuť log (.csv)", data=df_view.to_csv(index=False).encode("utf-8-sig"),
+                                   file_name=f"Kikiriki_Log_{DNESNY_DATUM}.csv", mime="text/csv")
+
+    with tab_obnova:
+        st.caption("Vráti appku do stavu z vybraného snapshotu. Aktuálny stav sa pred obnovou automaticky uloží do histórie, takže obnova sa dá vrátiť.")
+        msg = st.session_state.pop("msg_obnova", None)
+        if msg:
+            (st.success if msg[0] == "success" else st.error)(msg[1])
+        if st.button("Načítať zoznam záloh", key="btn_hist"):
+            try:
+                st.session_state.historia_zoznam = nacitaj_historiu()
+            except Exception as e:
+                st.error(f"Históriu sa nepodarilo načítať: {e}")
+        zoznam = st.session_state.get("historia_zoznam", [])
+        if zoznam:
+            idx = st.selectbox("Vyber snapshot:", options=list(range(len(zoznam))),
+                               format_func=lambda i: f"{zoznam[i]['cas']} | {zoznam[i]['nazov']}", key="vyber_zalohy")
+            try:
+                nahlad = json.loads(zoznam[idx]["data"])
+                obj = nahlad.get("objednavky", []) if isinstance(nahlad, dict) else nahlad
+                sklad_n = nahlad.get("sklad", {}) if isinstance(nahlad, dict) else {}
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Objednávky", len([o for o in obj if not o.get("❌ Zmazať")]))
+                c2.metric("Zelená spolu", f"{sum(sklad_n.get('zelena', {}).values()):.1f} kg")
+                c3.metric("Sáčky v regáli", int(sum(sklad_n.get('zabalena', {}).values())))
+            except Exception:
+                st.warning("Náhľad tohto snapshotu sa nedá zobraziť.")
+            st.checkbox("Rozumiem, že prepíšem aktuálny stav appky týmto snapshotom.", key="potvrdenie_obnovy")
+            st.button("⏪ Obnoviť tento stav", type="primary", disabled=not st.session_state.get("potvrdenie_obnovy", False),
+                      on_click=obnov_zo_zalohy_callback)
+        elif "historia_zoznam" in st.session_state:
+            st.info("História je zatiaľ prázdna.")
+
 
 # ========================================================
 # TAB 5: EXPEDÍCIA (LOGISTIKA)
