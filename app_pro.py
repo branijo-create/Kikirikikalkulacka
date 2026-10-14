@@ -9,96 +9,67 @@ import json
 st.set_page_config(page_title="Kikiriki Roastery PRO", page_icon="☕", layout="wide")
 
 # ==========================================
-# 🎨 FIREMNÝ DIZAJN (BARLOW, MASÍVNE BOLD ZÁLOŽKY & FARBY)
+# 🎨 FIREMNÝ DIZAJN (BARLOW, NEKOMPROMISNÝ BOLD PRE TABS & LOGO)
 # ==========================================
 firemny_dizajn = """
 <style>
-    /* Natiahnutie fontov Barlow a Barlow Condensed z Google Fonts */
-    @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Barlow:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Barlow:wght@500;600;700&display=swap');
 
-    /* Celkové nastavenie písma */
     html, body, [class*="css"] {
         font-family: 'Barlow', sans-serif !important;
         font-weight: 500;
     }
 
-    /* Všetky nadpisy v Barlow Condensed a firemnej modrej */
     h1, h2, h3, .stMarkdown h3 {
         font-family: 'Barlow Condensed', sans-serif !important;
         color: #2B5098 !important;
         text-transform: uppercase;
         letter-spacing: 0.5px;
-        font-weight: 700 !important;
+        font-weight: 800 !important;
     }
     
-    /* Metriky v dózach */
     [data-testid="stMetricValue"] {
         font-family: 'Barlow Condensed', sans-serif !important;
         color: #2B5098 !important;
         font-weight: 800 !important;
-        font-size: 2rem !important;
+        font-size: 2.2rem !important;
     }
 
-    /* ========================================================= */
-    /* 🔥 NEPRIESTRELNÉ ZACIELENIE PRE ZÁLOŽKY (TABS): BOLD + VÄČŠIE */
-    /* ========================================================= */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
-        border-bottom: 2px solid #2B5098 !important;
-        padding-bottom: 4px;
+    /* VŠETKY ZÁLOŽKY - AKTÍVNE AJ NEAKTÍVNE (MASÍVNY BOLD A VEĽKOSŤ) */
+    div[data-testid="stTabs"] button[role="tab"] {
+        height: 52px !important;
+        padding: 0px 24px !important;
+        border-radius: 6px 6px 0px 0px !important;
+        border: 1px solid #D1C5B4 !important;
+        border-bottom: none !important;
+        background-color: #EDE3D1 !important;
     }
-    
-    .stTabs [data-baseweb="tab"],
-    .stTabs button[data-baseweb="tab"],
-    .stTabs [data-baseweb="tab"] p,
-    .stTabs [data-baseweb="tab"] div {
+
+    div[data-testid="stTabs"] button[role="tab"] * {
         font-family: 'Barlow Condensed', sans-serif !important;
-        font-size: 1.35rem !important;      /* Výrazne zväčšené */
-        font-weight: 800 !important;        /* Extra tučné (Bold) */
+        font-size: 1.35rem !important;
+        font-weight: 800 !important;
+        letter-spacing: 1px !important;
         text-transform: uppercase !important;
-        letter-spacing: 0.8px !important;
-    }
-
-    /* Neaktívne záložky */
-    .stTabs [data-baseweb="tab"] {
-        background-color: #EDE4D4 !important;
         color: #2B5098 !important;
-        border-radius: 8px 8px 0px 0px !important;
-        padding: 10px 28px !important;
-        border: 1px solid #D8CABE !important;
-        border-bottom: none !important;
-        transition: all 0.2s ease-in-out;
     }
 
-    .stTabs [data-baseweb="tab"]:hover {
-        background-color: #E2D5C1 !important;
-        color: #1A3568 !important;
-    }
-
-    /* Aktívna vybratá záložka */
-    .stTabs [aria-selected="true"],
-    .stTabs [aria-selected="true"] p {
+    /* AKTÍVNA ZÁLOŽKA */
+    div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
         background-color: #2B5098 !important;
-        color: #FFFFFF !important;
-        border: 1px solid #2B5098 !important;
-        border-bottom: none !important;
+        border-color: #2B5098 !important;
     }
 
-    /* Tabuľky a tlačidlá */
+    div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] * {
+        color: #FFFFFF !important;
+    }
+
     .stDataFrame, th, td, .stButton>button {
         font-weight: 600 !important;
-    }
-    
-    /* Expandery v pražiarni */
-    .streamlit-expanderHeader p {
-        font-family: 'Barlow', sans-serif !important;
-        font-size: 1.15rem !important;
-        color: #2B5098 !important;
     }
 </style>
 """
 st.markdown(firemny_dizajn, unsafe_allow_html=True)
-# ==========================================
 
 # --- KONFIGURÁCIA ---
 KAPACITA_ZELENA_BATCH = 5.0
@@ -215,29 +186,32 @@ if 'nazov_prazenia' not in st.session_state:
 if 'form_key' not in st.session_state: st.session_state.form_key = 0
 def vynuluj_policka(): st.session_state.form_key += 1
 
-# --- HLAVNÉ ROZHRANIE (HLAVIČKA S LOGOM VPRAVO HORE) ---
+# --- HLAVNÉ ROZHRANIE S REÁLNYM KOHÚTOM V LOGU ---
 col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 6.8 | Výrobný manažment")
+    st.caption("Verzia 6.9 | Výrobný manažment")
 
 with col_head_right:
-    # Oficiálne logo KIKIRIKI v pravej hornej časti
-    logo_html = """
+    # Presná silueta kohúta KIKIRIKI
+    logo_kohut_html = """
     <div style="display: flex; flex-direction: column; align-items: flex-end; justify-content: center; padding-top: 5px;">
-        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" fill="#2B5098"/>
+        <svg width="44" height="44" viewBox="0 0 100 100" fill="#2B5098" xmlns="http://www.w3.org/2000/svg">
+            <!-- Hlava a hrebeň kohúta -->
+            <path d="M50 10 C38 10 32 18 30 25 C26 23 20 25 20 31 C20 34 22 37 25 39 C22 43 23 49 28 52 C29 55 32 58 36 60 C37 66 41 73 47 77 C44 80 40 82 35 83 L35 88 C45 88 53 83 58 77 C66 75 73 68 76 60 C79 50 78 38 72 28 C67 18 59 10 50 10 Z M63 42 C60.8 42 59 40.2 59 38 C59 35.8 60.8 34 63 34 C65.2 34 67 35.8 67 38 C67 40.2 65.2 42 63 42 Z M78 45 L88 47 L78 52 Z"/>
+            <!-- Lalok -->
+            <path d="M68 53 C70 58 68 64 63 66 C59 67 56 63 57 58 C61 58 65 56 68 53 Z"/>
         </svg>
-        <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 800; color: #2B5098; font-size: 1.25rem; letter-spacing: 1.5px; text-transform: uppercase;">KIKIRIKI</span>
+        <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 900; color: #2B5098; font-size: 1.35rem; letter-spacing: 2px; text-transform: uppercase;">KIKIRIKI</span>
     </div>
     """
-    st.markdown(logo_html, unsafe_allow_html=True)
+    st.markdown(logo_kohut_html, unsafe_allow_html=True)
 
 st.text_input("Identifikátor praženia:", key="nazov_prazenia", on_change=auto_uloz)
 
 # ========================================================
-# 🚀 VÝRAZNÉ, VEĽKÉ A TUČNÉ ZÁLOŽKY
+# 🚀 ZÁLOŽKY
 # ========================================================
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "OBJEDNÁVKY", 
@@ -512,7 +486,7 @@ with tab1:
                 )
 
 # ========================================================
-# TAB 2: PRAŽIAREŇ (Pôvodný tvar, tučné názvy káv a batchov)
+# TAB 2: PRAŽIAREŇ
 # ========================================================
 with tab2:
     st.markdown("### Panel pri stroji")
