@@ -8,108 +8,6 @@ import json
 # --- NASTAVENIE STRÁNKY ---
 st.set_page_config(page_title="Roastery PRO v5.3", page_icon="☕", layout="wide")
 
-# ==========================================
-# 🎨 CUSTOM CSS DIZAJN (MODERNÝ VZHĽAD)
-# ==========================================
-custom_css = """
-<style>
-    /* Import moderného písma Inter z Google Fonts */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
-
-    /* Aplikovanie písma na celú aplikáciu */
-    html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif !important;
-    }
-
-    /* Nadpisy */
-    h1, h2, h3 {
-        color: #2c1e16 !important; /* Tmavá kávová */
-        font-weight: 700 !important;
-        letter-spacing: -0.5px;
-    }
-
-    /* Primárne tlačidlá (Kávový gradient) */
-    .stButton>button[kind="primary"] {
-        background: linear-gradient(135deg, #6b4c3a 0%, #4a3324 100%) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 8px !important;
-        font-weight: 600 !important;
-        padding: 0.5rem 1rem !important;
-        transition: all 0.3s ease !important;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1) !important;
-    }
-    .stButton>button[kind="primary"]:hover {
-        transform: translateY(-2px) !important;
-        box-shadow: 0 6px 12px rgba(0,0,0,0.15) !important;
-        background: linear-gradient(135deg, #8b644c 0%, #5e412e 100%) !important;
-    }
-
-    /* Sekundárne tlačidlá */
-    .stButton>button[kind="secondary"] {
-        border-radius: 8px !important;
-        border: 1px solid #dcdcdc !important;
-        background-color: #ffffff !important;
-        font-weight: 600 !important;
-        transition: all 0.3s ease !important;
-    }
-    .stButton>button[kind="secondary"]:hover {
-        border-color: #6b4c3a !important;
-        color: #6b4c3a !important;
-        transform: translateY(-2px) !important;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05) !important;
-    }
-
-    /* Expandery (Karty) */
-    .streamlit-expanderHeader {
-        background-color: #faf9f8 !important;
-        border-radius: 8px !important;
-        font-weight: 600 !important;
-    }
-    [data-testid="stExpander"] {
-        background-color: #ffffff;
-        border-radius: 12px !important;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.04) !important;
-        border: 1px solid #eaeaea !important;
-        margin-bottom: 15px;
-    }
-
-    /* Záložky (Tabs) */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
-        background-color: transparent;
-    }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 8px 8px 0 0 !important;
-        padding: 10px 20px !important;
-        background-color: #f0ebe4 !important;
-        border: none !important;
-        font-weight: 600 !important;
-        color: #555555 !important;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #6b4c3a !important;
-        color: white !important;
-    }
-
-    /* Dataframe a Tabuľky - zaoblenie rohov */
-    [data-testid="stDataFrame"] {
-        border-radius: 12px !important;
-        overflow: hidden !important;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.05) !important;
-        border: 1px solid #eaeaea !important;
-    }
-
-    /* Kontajnery (Jemné pozadie pre odlíšenie sekcií) */
-    .stAlert {
-        border-radius: 8px !important;
-        border: none !important;
-    }
-</style>
-"""
-st.markdown(custom_css, unsafe_allow_html=True)
-# ==========================================
-
 # --- KONFIGURÁCIA ---
 KAPACITA_ZELENA_BATCH = 5.0
 STANDARDNY_VYPEK = 20
@@ -231,7 +129,6 @@ st.caption("Verzia 5.3 | Zóna presnej produkcie")
 
 st.text_input("📅 Identifikátor praženia:", key="nazov_prazenia", on_change=auto_uloz)
 
-# Moderné záložky
 tab1, tab2, tab3, tab4 = st.tabs(["📝 KANCELÁRIA", "🔥 PRAŽIAREŇ", "📦 SKLAD A BALENIE", "📊 ÚČTOVNÍCTVO"])
 
 # ========================================================
