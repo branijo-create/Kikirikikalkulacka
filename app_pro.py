@@ -9,13 +9,10 @@ import json
 st.set_page_config(page_title="Kikiriki Roastery PRO", page_icon="☕", layout="wide")
 
 # ==========================================
-# 🎨 FIREMNÝ DIZAJN (BARLOW, FARBY & FONT AWESOME)
+# 🎨 FIREMNÝ DIZAJN (BARLOW, FARBY & SVG IKONY)
 # ==========================================
 firemny_dizajn = """
 <style>
-    /* Načítanie Font Awesome ikon z CDN */
-    @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css');
-
     /* Natiahnutie fontov Barlow a Barlow Condensed z Google Fonts */
     @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap');
 
@@ -37,10 +34,34 @@ firemny_dizajn = """
         font-family: 'Barlow Condensed', sans-serif !important;
         color: #2B5098 !important;
     }
+
+    /* Štýl pre ikony v texte / tlačidlách */
+    .pro-icon {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        vertical-align: middle;
+        margin-right: 6px;
+        fill: #2B5098;
+    }
 </style>
 """
 st.markdown(firemny_dizajn, unsafe_allow_html=True)
 # ==========================================
+
+# --- SVG IKONY PRE ČISTÝ DESIGN ---
+ICONS = {
+    "objednavky": '<svg class="pro-icon" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>',
+    "praziaren": '<svg class="pro-icon" viewBox="0 0 24 24"><path d="M17.66 11.2C17.43 10.9 17.15 10.63 16.89 10.38C16.22 9.78 15.62 9.35 15.5 8.5C15.42 7.88 15.72 7.32 16.1 6.82C16.5 6.3 17 5.7 17 5c0-1.1-.9-2-2-2-1.38 0-2.5 1.12-2.5 2.5 0 .28.05.54.13.79-.31-.11-.64-.18-.98-.21C11.5 4.09 10.36 3 9 3 7.34 3 6 4.34 6 6c0 1.3.84 2.4 2 2.82V11c-2.21 0-4 1.79-4 4 0 1.66 1.02 3.08 2.46 3.73C6.18 19.3 6 19.64 6 20c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2 0-.61-.28-1.15-.71-1.52.88-.84 1.41-2.02 1.41-3.28 0-1.46-.77-2.74-1.94-3.5z"/></svg>',
+    "balenie": '<svg class="pro-icon" viewBox="0 0 24 24"><path d="M21 16.5c0 .38-.21.71-.53.88l-7.9 4.44c-.16.12-.36.18-.57.18s-.41-.06-.57-.18l-7.9-4.44A1.002 1.002 0 0 1 3 16.5v-9c0-.38.21-.71.53-.88l7.9-4.44c.32-.18.72-.18 1.04 0l7.9 4.44c.32.17.53.5.53.88v9zM12 4.15L6.04 7.5 12 10.85 17.96 7.5 12 4.15zM5 15.91l6 3.38v-6.71L5 9.21v6.7zm14 0v-6.7l-6 3.37v6.71l6-3.38z"/></svg>',
+    "sklad": '<svg class="pro-icon" viewBox="0 0 24 24"><path d="M20 13H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 19c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm13-11h-3V4c0-.55-.45-1-1-1H8c-.55 0-1 .45-1 1v4H4c-.55 0-1 .45-1 1v3h18V9c0-.55-.45-1-1-1zM9 5h6v3H9V5z"/></svg>',
+    "uctovnictvo": '<svg class="pro-icon" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/></svg>',
+    "cloud_load": '<svg class="pro-icon" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>',
+    "cloud_save": '<svg class="pro-icon" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5-5-5 5h3v4h4v-4h3z"/></svg>',
+    "excel": '<svg class="pro-icon" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6z"/></svg>',
+    "plus": '<svg class="pro-icon" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>',
+    "trash": '<svg class="pro-icon" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>'
+}
 
 # --- KONFIGURÁCIA ---
 KAPACITA_ZELENA_BATCH = 5.0
@@ -159,17 +180,17 @@ def vynuluj_policka(): st.session_state.form_key += 1
 
 # --- HLAVNÉ ROZHRANIE ---
 st.title("Kikiriki Roastery PRO")
-st.caption("Verzia 5.8 | Výrobný manažment")
+st.caption("Verzia 5.9 | Výrobný manažment")
 
 st.text_input("Identifikátor praženia:", key="nazov_prazenia", on_change=auto_uloz)
 
-# Záložky obohatené o moderné Font Awesome ikony
+# Záložky s čistými SVG ikonami
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📋 OBJEDNÁVKY", 
-    "🔥 PRAŽIAREŇ", 
-    "📦 BALENIE", 
-    "🏭 SKLAD", 
-    "📊 ÚČTOVNÍCTVO"
+    f"{ICONS['objednavky']} OBJEDNÁVKY", 
+    f"{ICONS['praziaren']} PRAŽIAREŇ", 
+    f"{ICONS['balenie']} BALENIE", 
+    f"{ICONS['sklad']} SKLAD", 
+    f"{ICONS['uctovnictvo']} ÚČTOVNÍCTVO"
 ])
 
 # ========================================================
@@ -191,10 +212,12 @@ with tab1:
 
     col_load, col_save = st.columns(2)
     with col_load:
-        st.button("Načítať stav z Cloudu", type="secondary", use_container_width=True, on_click=nacitaj_vsetko_z_cloudu_callback)
+        if st.button(f"{ICONS['cloud_load']} Načítať stav z Cloudu", type="secondary", use_container_width=True):
+            nacitaj_vsetko_z_cloudu_callback()
+            st.rerun()
 
     with col_save:
-        if st.button("Uložiť aktuálny stav do Cloudu", type="primary", use_container_width=True):
+        if st.button(f"{ICONS['cloud_save']} Uložiť aktuálny stav do Cloudu", type="primary", use_container_width=True):
             auto_uloz()
             cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
             aktivne = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
@@ -210,7 +233,7 @@ with tab1:
         try:
             xl = pd.ExcelFile(nahraty_subor)
             df_import = xl.parse('Spracovane_Objednavky') if 'Spracovane_Objednavky' in xl.sheet_names else xl.parse(0)
-            if st.button("Spracovať Excel a pridať objednávky", type="primary"):
+            if st.button(f"{ICONS['excel']} Spracovať Excel a pridať objednávky", type="primary"):
                 for index, row in df_import.iterrows():
                     kusy_zaklad = int(row.get("Kusy", 0))
                     zabalene_hist = int(row.get("Zabalené (ks)", kusy_zaklad)) 
@@ -249,7 +272,7 @@ with tab1:
             with col2_2: kusy_500 = st.number_input("500g (ks):", min_value=0, step=1, key=f"k_500_{st.session_state.form_key}")
             with col2_3: kusy_1000 = st.number_input("1000g (ks):", min_value=0, step=1, key=f"k_1000_{st.session_state.form_key}")
 
-        if st.button("Zapísať do knihy", type="secondary"):
+        if st.button(f"{ICONS['plus']} Zapísať do knihy", type="secondary"):
             if kusy_220 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 220, "Kusy": kusy_220, "Zabalené (ks)": kusy_220, "Potvrdene": False, "❌ Zmazať": False, "Sudy": False})
             if kusy_500 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 500, "Kusy": kusy_500, "Zabalené (ks)": kusy_500, "Potvrdene": False, "❌ Zmazať": False, "Sudy": False})
             if kusy_1000 > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": kava, "Gramáž": 1000, "Kusy": kusy_1000, "Zabalené (ks)": kusy_1000, "Potvrdene": False, "❌ Zmazať": False, "Sudy": False})
@@ -263,7 +286,7 @@ with tab1:
             st.markdown("<br>", unsafe_allow_html=True)
             inputs_kavy = {}
             for k in kavy_recepty.keys(): inputs_kavy[k] = st.number_input(f"{k} (ks):", min_value=0, step=1, key=f"k_{k}_{st.session_state.form_key}")
-        if st.button("Zapísať do knihy", type="secondary"):
+        if st.button(f"{ICONS['plus']} Zapísať do knihy", type="secondary"):
             for k, v in inputs_kavy.items():
                 if v > 0: st.session_state.aktualne_objednavky.append({"Odberateľ": meno or "Neznámy", "Káva": k, "Gramáž": gramaz, "Kusy": v, "Zabalené (ks)": v, "Potvrdene": False, "❌ Zmazať": False, "Sudy": False})
             auto_uloz()
@@ -276,7 +299,7 @@ with tab1:
             col_b1, col_b2 = st.columns(2)
             with col_b1: kava_batch = st.selectbox("Vyber zrno:", list(kavy_recepty.keys()), key=f"kava_b_{st.session_state.form_key}")
             with col_b2: davky_batch = st.number_input("Počet plných dávok (á 5kg zelenej):", min_value=1, step=1, key=f"davky_b_{st.session_state.form_key}")
-            if st.button("Pridať BATCH", type="primary"):
+            if st.button(f"{ICONS['plus']} Pridať BATCH", type="primary"):
                 st.session_state.aktualne_objednavky.append({
                     "Odberateľ": "SKLAD (Sudy)", "Káva": kava_batch, "Gramáž": 0, "Kusy": davky_batch, "Zabalené (ks)": 0, "Potvrdene": True, "Sudy": True, "❌ Zmazať": False
                 })
@@ -308,7 +331,7 @@ with tab1:
                 
             col_del1, col_del2 = st.columns([1, 1])
             with col_del1:
-                if st.button("Odstrániť označené", type="secondary"):
+                if st.button(f"{ICONS['trash']} Odstrániť označené", type="secondary"):
                     st.session_state.aktualne_objednavky = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True]
                     auto_uloz()
                     st.rerun()
@@ -323,7 +346,7 @@ with tab1:
 
     with col_vypocet:
         st.markdown("### Spracovanie a Export")
-        if st.button("Vypočítať technický plán a stiahnuť Excel", type="primary", use_container_width=True):
+        if st.button(f"{ICONS['excel']} Vypočítať technický plán a stiahnuť Excel", type="primary", use_container_width=True):
             if not st.session_state.aktualne_objednavky:
                 st.warning("Najprv pridaj dáta do knihy.")
             else:
@@ -430,7 +453,7 @@ with tab1:
                     write_styled_sheet(sum_pivot_ex, 'Sumar_Obalov')
 
                 st.download_button(
-                    label="Stiahnuť Kikiriki Excel (.xlsx)", data=buffer.getvalue(), file_name=f"Kikiriki_PRO_{st.session_state.nazov_prazenia}.xlsx",
+                    label=f"{ICONS['excel']} Stiahnuť Kikiriki Excel (.xlsx)", data=buffer.getvalue(), file_name=f"Kikiriki_PRO_{st.session_state.nazov_prazenia}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary", use_container_width=True
                 )
 
