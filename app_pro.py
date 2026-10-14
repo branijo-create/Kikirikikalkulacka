@@ -9,20 +9,10 @@ import json
 st.set_page_config(page_title="Kikiriki Roastery PRO", page_icon="☕", layout="wide")
 
 # ==========================================
-# 🎨 FIREMNÝ DIZAJN (BARLOW, MOBILNÝ FIX FARIEB & BOLD)
+# 🎨 FIREMNÝ DIZAJN (BOLDER & VÄČŠIE ZÁLOŽKY)
 # ==========================================
 firemny_dizajn = """
 <style>
-    /* Zafixovanie farieb a zákaz núteného dark mode na mobiloch */
-    :root {
-        color-scheme: light only;
-    }
-    
-    /* Vynútenie krémového pozadia pre celú aplikáciu aj na mobile */
-    .stApp {
-        background-color: #F5F0E6 !important;
-    }
-
     /* Natiahnutie fontov Barlow a Barlow Condensed z Google Fonts */
     @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap');
 
@@ -48,21 +38,21 @@ firemny_dizajn = """
         font-weight: 700 !important;
     }
 
-    /* ÚPRAVA ZÁLOŽIEK: Väčšie, tučné písmo, firemná modrá a čistý štýl */
+    /* ZVÄČŠENÉ A TUČNÉ HLASNÉ ZÁLOŽKY */
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
     }
     
     .stTabs [data-baseweb="tab"] {
-        height: 50px;
+        height: 52px;
         background-color: #f4ecdf !important;
         border-radius: 8px 8px 0px 0px !important;
-        padding: 0px 24px !important;
+        padding: 0px 28px !important;
         font-family: 'Barlow Condensed', sans-serif !important;
-        font-size: 1.15rem !important;
-        font-weight: 700 !important;
+        font-size: 1.25rem !important; /* Zväčšené písmo */
+        font-weight: 700 !important; /* Tučné písmo (bold) */
         color: #2B5098 !important;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.8px;
     }
 
     /* Aktívna záložka zvýraznená plnou firemnou modrou a bielym písmom */
@@ -74,13 +64,6 @@ firemny_dizajn = """
     /* Tučné texty v tabuľkách a tlačidlách */
     .stDataFrame, th, td, .stButton>button {
         font-weight: 600 !important;
-    }
-    
-    /* Vylepšenie textu v expanderoch (pražiareň) pre lepšiu čitateľnosť */
-    .streamlit-expanderHeader p {
-        font-family: 'Barlow', sans-serif !important;
-        font-size: 1.15rem !important;
-        color: #2B5098 !important;
     }
 </style>
 """
@@ -207,7 +190,7 @@ col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 6.5 | Výrobný manažment")
+    st.caption("Verzia 6.7 | Výrobný manažment")
 
 with col_head_right:
     logo_html = """
@@ -222,7 +205,7 @@ with col_head_right:
 
 st.text_input("Identifikátor praženia:", key="nazov_prazenia", on_change=auto_uloz)
 
-# Tučné, väčšie a prehľadné záložky
+# Zväčšené a tučné hlavné záložky
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "OBJEDNÁVKY", 
     "PRAŽIAREŇ", 
@@ -496,7 +479,7 @@ with tab1:
                 )
 
 # ========================================================
-# TAB 2: PRAŽIAREŇ (Pôvodný tvar, tučné názvy káv a batchov)
+# TAB 2: PRAŽIAREŇ
 # ========================================================
 with tab2:
     st.markdown("### Panel pri stroji")
