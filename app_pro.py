@@ -9,10 +9,20 @@ import json
 st.set_page_config(page_title="Kikiriki Roastery PRO", page_icon="☕", layout="wide")
 
 # ==========================================
-# 🎨 FIREMNÝ DIZAJN (DARK MODE & BOLD)
+# 🎨 FIREMNÝ DIZAJN (BARLOW, MOBILNÝ FIX FARIEB & BOLD)
 # ==========================================
 firemny_dizajn = """
 <style>
+    /* Zafixovanie farieb a zákaz núteného dark mode na mobiloch */
+    :root {
+        color-scheme: light only;
+    }
+    
+    /* Vynútenie krémového pozadia pre celú aplikáciu aj na mobile */
+    .stApp {
+        background-color: #F5F0E6 !important;
+    }
+
     /* Natiahnutie fontov Barlow a Barlow Condensed z Google Fonts */
     @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap');
 
@@ -25,37 +35,37 @@ firemny_dizajn = """
     /* Vynútenie tučného písma pre všetky nadpisy */
     h1, h2, h3, .stMarkdown h3 {
         font-family: 'Barlow Condensed', sans-serif !important;
-        color: #5B8BE8 !important; /* Svetlejšia modrá pre výbornú čitateľnosť v tmavom móde */
+        color: #2B5098 !important;
         text-transform: uppercase;
         letter-spacing: 0.5px;
         font-weight: 700 !important;
     }
     
-    /* Zvýraznenie metrík (veľké čísla v dózach) */
+    /* Zvýraznenie metrík (veľké čísla v dózach) tučnou firemnou modrou */
     [data-testid="stMetricValue"] {
         font-family: 'Barlow Condensed', sans-serif !important;
-        color: #5B8BE8 !important;
+        color: #2B5098 !important;
         font-weight: 700 !important;
     }
 
-    /* ÚPRAVA ZÁLOŽIEK: Tmavý moderný štýl */
+    /* ÚPRAVA ZÁLOŽIEK: Väčšie, tučné písmo, firemná modrá a čistý štýl */
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
     }
     
     .stTabs [data-baseweb="tab"] {
         height: 50px;
-        background-color: #1E222A !important;
+        background-color: #f4ecdf !important;
         border-radius: 8px 8px 0px 0px !important;
         padding: 0px 24px !important;
         font-family: 'Barlow Condensed', sans-serif !important;
         font-size: 1.15rem !important;
         font-weight: 700 !important;
-        color: #A0B3D9 !important;
+        color: #2B5098 !important;
         letter-spacing: 0.5px;
     }
 
-    /* Aktívna záložka zvýraznená svietivou modrou a bielym písmom */
+    /* Aktívna záložka zvýraznená plnou firemnou modrou a bielym písmom */
     .stTabs [aria-selected="true"] {
         background-color: #2B5098 !important;
         color: #FFFFFF !important;
@@ -64,6 +74,13 @@ firemny_dizajn = """
     /* Tučné texty v tabuľkách a tlačidlách */
     .stDataFrame, th, td, .stButton>button {
         font-weight: 600 !important;
+    }
+    
+    /* Vylepšenie textu v expanderoch (pražiareň) pre lepšiu čitateľnosť */
+    .streamlit-expanderHeader p {
+        font-family: 'Barlow', sans-serif !important;
+        font-size: 1.15rem !important;
+        color: #2B5098 !important;
     }
 </style>
 """
@@ -190,15 +207,15 @@ col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 6.6 | Výrobný manažment (Dark Mode)")
+    st.caption("Verzia 6.5 | Výrobný manažment")
 
 with col_head_right:
     logo_html = """
     <div style="display: flex; flex-direction: column; align-items: flex-end; justify-content: center; padding-top: 10px;">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" fill="#5B8BE8"/>
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" fill="#2B5098"/>
         </svg>
-        <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 700; color: #5B8BE8; font-size: 1.1rem; letter-spacing: 1px; text-transform: uppercase;">KIKIRIKI</span>
+        <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 700; color: #2B5098; font-size: 1.1rem; letter-spacing: 1px; text-transform: uppercase;">KIKIRIKI</span>
     </div>
     """
     st.markdown(logo_html, unsafe_allow_html=True)
@@ -479,7 +496,7 @@ with tab1:
                 )
 
 # ========================================================
-# TAB 2: PRAŽIAREŇ
+# TAB 2: PRAŽIAREŇ (Pôvodný tvar, tučné názvy káv a batchov)
 # ========================================================
 with tab2:
     st.markdown("### Panel pri stroji")
