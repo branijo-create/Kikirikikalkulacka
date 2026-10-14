@@ -9,20 +9,20 @@ import json
 st.set_page_config(page_title="Kikiriki Roastery PRO", page_icon="☕", layout="wide")
 
 # ==========================================
-# 🎨 FIREMNÝ DIZAJN (BARLOW, BOLD & FARBY)
+# 🎨 FIREMNÝ DIZAJN (BARLOW, BOLD ZÁLOŽKY & FARBY)
 # ==========================================
 firemny_dizajn = """
 <style>
     /* Natiahnutie fontov Barlow a Barlow Condensed z Google Fonts */
     @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap');
 
-    /* Aplikovanie klasického Barlow na celý bežný text s dôrazom na čitateľnosť */
+    /* Aplikovanie klasického Barlow na celý bežný text */
     html, body, [class*="css"] {
         font-family: 'Barlow', sans-serif !important;
         font-weight: 500;
     }
 
-    /* Vynútenie tučného písma pre všetky nadpisy a dôležité prvky */
+    /* Vynútenie tučného písma pre všetky nadpisy */
     h1, h2, h3, .stMarkdown h3 {
         font-family: 'Barlow Condensed', sans-serif !important;
         color: #2B5098 !important;
@@ -38,33 +38,45 @@ firemny_dizajn = """
         font-weight: 700 !important;
     }
 
-    /* Tučné texty v tabuľkách a dátových bunkách */
-    .stDataFrame, th, td {
-        font-weight: 600 !important;
+    /* ÚPRAVA ZÁLOŽIEK: Väčšie, tučné písmo, firemná modrá a čistý štýl */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        background-color: #f4ecdf !important;
+        border-radius: 8px 8px 0px 0px !important;
+        padding: 0px 24px !important;
+        font-family: 'Barlow Condensed', sans-serif !important;
+        font-size: 1.15rem !important;
+        font-weight: 700 !important;
+        color: #2B5098 !important;
+        letter-spacing: 0.5px;
     }
 
-    /* Vylepšenie kontrastu pre tlačidlá a vstupy */
-    .stButton>button {
+    /* Aktívna záložka zvýraznená plnou firemnou modrou a bielym písmom */
+    .stTabs [aria-selected="true"] {
+        background-color: #2B5098 !important;
+        color: #FFFFFF !important;
+    }
+
+    /* Tučné texty v tabuľkách a tlačidlách */
+    .stDataFrame, th, td, .stButton>button {
         font-weight: 600 !important;
+    }
+    
+    /* Vylepšenie textu v expanderoch (pražiareň) pre lepšiu čitateľnosť */
+    .streamlit-expanderHeader p {
+        font-family: 'Barlow Condensed', sans-serif !important;
+        font-size: 1.2rem !important;
+        font-weight: 700 !important;
+        color: #2B5098 !important;
     }
 </style>
 """
 st.markdown(firemny_dizajn, unsafe_allow_html=True)
 # ==========================================
-
-# --- FIREMNÉ LOGO (SVG) ---
-logo_html = """
-<div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" fill="#2B5098"/>
-    </svg>
-    <div>
-        <h1 style="margin: 0; font-size: 2.2rem; line-height: 1.1;">KIKIRIKI ROASTERY PRO</h1>
-        <p style="margin: 0; color: #555; font-weight: 600; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 1px;">Výrobný a produkčný manažment</p>
-    </div>
-</div>
-"""
-st.markdown(logo_html, unsafe_allow_html=True)
 
 # --- KONFIGURÁCIA ---
 KAPACITA_ZELENA_BATCH = 5.0
@@ -181,10 +193,27 @@ if 'nazov_prazenia' not in st.session_state:
 if 'form_key' not in st.session_state: st.session_state.form_key = 0
 def vynuluj_policka(): st.session_state.form_key += 1
 
-# --- HLAVNÉ ROZHRANIE ---
+# --- HLAVNÉ ROZHRANIE (HLAVIČKA S LOGOM VPRAVO HORE) ---
+col_head_left, col_head_right = st.columns([3, 1])
+
+with col_head_left:
+    st.title("Kikiriki Roastery PRO")
+    st.caption("Verzia 6.3 | Výrobný manažment")
+
+with col_head_right:
+    logo_html = """
+    <div style="display: flex; flex-direction: column; align-items: flex-end; justify-content: center; padding-top: 10px;">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" fill="#2B5098"/>
+        </svg>
+        <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 700; color: #2B5098; font-size: 1.1rem; letter-spacing: 1px; text-transform: uppercase;">KIKIRIKI</span>
+    </div>
+    """
+    st.markdown(logo_html, unsafe_allow_html=True)
+
 st.text_input("Identifikátor praženia:", key="nazov_prazenia", on_change=auto_uloz)
 
-# Záložky s čistým tučným písmom
+# Tučné, väčšie a prehľadné záložky
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "OBJEDNÁVKY", 
     "PRAŽIAREŇ", 
@@ -458,7 +487,7 @@ with tab1:
                 )
 
 # ========================================================
-# TAB 2: PRAŽIAREŇ
+# TAB 2: PRAŽIAREŇ (Zväčšené, tučné nadpisy káv)
 # ========================================================
 with tab2:
     st.markdown("### Panel pri stroji")
@@ -493,7 +522,11 @@ with tab2:
             
             stav = st.session_state.priebeh_prazenia.get(zrno, {"hotovo": False, "zelena_real": 0.0, "uprazena_real": 0.0})
             
-            with st.expander(f"{'Hotovo' if stav['hotovo'] else 'Na rade:'} {zrno} ({davky_plan} batchov)", expanded=not stav['hotovo']):
+            # Zväčšený a vyhrubený názov kávy v expanderi
+            stav_text = "HOTOVO" if stav['hotovo'] else "NA RADE"
+            expander_title = f"{stav_text}: {zrno.upper()}  —  {davky_plan} BATCHOV"
+            
+            with st.expander(expander_title, expanded=not stav['hotovo']):
                 col_info, col_input = st.columns([1, 1])
                 
                 with col_info:
