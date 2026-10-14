@@ -9,10 +9,13 @@ import json
 st.set_page_config(page_title="Kikiriki Roastery PRO", page_icon="☕", layout="wide")
 
 # ==========================================
-# 🎨 FIREMNÝ DIZAJN (BARLOW & FARBY)
+# 🎨 FIREMNÝ DIZAJN (BARLOW, FARBY & FONT AWESOME)
 # ==========================================
 firemny_dizajn = """
 <style>
+    /* Načítanie Font Awesome ikon z CDN */
+    @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css');
+
     /* Natiahnutie fontov Barlow a Barlow Condensed z Google Fonts */
     @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap');
 
@@ -156,12 +159,18 @@ def vynuluj_policka(): st.session_state.form_key += 1
 
 # --- HLAVNÉ ROZHRANIE ---
 st.title("Kikiriki Roastery PRO")
-st.caption("Verzia 5.7 | Výrobný manažment")
+st.caption("Verzia 5.8 | Výrobný manažment")
 
 st.text_input("Identifikátor praženia:", key="nazov_prazenia", on_change=auto_uloz)
 
-# Upravené názvy záložiek
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["OBJEDNÁVKY", "PRAŽIAREŇ", "BALENIE", "SKLAD", "ÚČTOVNÍCTVO"])
+# Záložky obohatené o moderné Font Awesome ikony
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📋 OBJEDNÁVKY", 
+    "🔥 PRAŽIAREŇ", 
+    "📦 BALENIE", 
+    "🏭 SKLAD", 
+    "📊 ÚČTOVNÍCTVO"
+])
 
 # ========================================================
 # TAB 1: OBJEDNÁVKY
@@ -482,7 +491,7 @@ with tab2:
                                 auto_uloz()
                             st.number_input("Zelená (kg):", value=float(stav["zelena_real"] or zelena_plan), step=0.1, key=f"z_real_{zrno}", on_change=update_priebeh)
                             st.number_input("Upražená (kg):", value=float(stav["uprazena_real"]), step=0.1, key=f"u_real_{zrno}", on_change=update_priebeh)
-                            st.checkbox("Uloжить a presunúť do Skladu", value=stav["hotovo"], key=f"hotovo_{zrno}", on_change=update_priebeh)
+                            st.checkbox("Uložiť a presunúť do Skladu", value=stav["hotovo"], key=f"hotovo_{zrno}", on_change=update_priebeh)
                     else:
                         st.success(f"Sklad doplnený: {stav['uprazena_real']} kg")
                         if st.button("Vrátiť späť (Zrušiť)", key=f"undo_{zrno}", type="secondary"):
