@@ -315,6 +315,30 @@ def nacitaj_log():
     df = pd.DataFrame(riadky[1:], columns=riadky[0])
     return df.iloc[::-1].reset_index(drop=True)
 
+NAZOV_LISTU_EVICKA = "Evicka_Logy"
+
+def uloz_export_pre_evicku(odberatel, txt_obsah):
+    try:
+        import gspread
+        spreadsheet = otvor_tabulku(get_client())
+        try:
+            ws = spreadsheet.worksheet(NAZOV_LISTU_EVICKA)
+        except gspread.exceptions.WorksheetNotFound:
+            ws = spreadsheet.add_worksheet(title=NAZOV_LISTU_EVICKA, rows=1000, cols=3)
+            ws.append_row(["Čas exportu", "Odberateľ", "TXT Obsah"], value_input_option="RAW")
+        ws.append_row([datetime.now().strftime("%d.%m.%Y %H:%M:%S"), odberatel, txt_obsah], value_input_option="RAW")
+        return True
+    except Exception:
+        return False
+
+def nacitaj_exporty_pre_evicku():
+    try:
+        spreadsheet = otvor_tabulku(get_client())
+        zaznamy = spreadsheet.worksheet(NAZOV_LISTU_EVICKA).get_all_values()[1:]
+        return list(reversed(zaznamy))
+    except Exception:
+        return []
+
 def nacitaj_historiu():
     import gspread
     spreadsheet = otvor_tabulku(get_client())
@@ -608,7 +632,7 @@ def logo_html():
 col_head_left, col_head_lock, col_head_logo = st.columns([14, 1, 2], vertical_alignment="center")
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 9.9 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 10.0 | Výroba, Sklad & ERP Kódy")
 with col_head_lock:
     ikona = "🔓" if st.session_state.get("admin_odomknute", False) else "🔒"
     if st.button(ikona, key="btn_zamok", help="Inventúra, log a obnova"):
@@ -681,7 +705,7 @@ with tab1:
     col1, col2 = st.columns(2)
     with col1:
         meno = st.text_input("Odberateľ:", placeholder="Meno zákazníka alebo prevádzky...")
-        rezim = st.radio("Režim zadávania:", ["Podľa kávy", "Podľa gramáže", "Skladový BATCH (Sudy)"], horizontal=True, on_change=vynuluj_policka)
+        rezim = st.radio("Režim zadávania:", ["Podľa kávy", "Podľa gramáže", "Skladový BATCH (Dávka)"], horizontal=True, on_change=vynuluj_policka)
 
     if rezim == "Podľa kávy":
         with col1: kava = st.selectbox("Vyber kávu:", list(kavy_recepty.keys()), on_change=vynuluj_policka)
@@ -717,7 +741,7 @@ with tab1:
             vynuluj_policka()
             st.rerun()
             
-    elif rezim == "Skladový BATCH (Sudy)":
+    elif rezim == "Skladový BATCH (Dávka)":
         with st.container():
             st.info("Pridá dávky priamo do plánu praženia a následne do Skladu (Dóz). Tieto položky sa nebalia do sáčkov.")
             col_b1, col_b2 = st.columns(2)
@@ -725,9 +749,9 @@ with tab1:
             with col_b2: davky_batch = st.number_input("Počet plných dávok (á 5kg zelenej):", min_value=1, step=1, key=f"davky_b_{st.session_state.form_key}")
             if st.button("Pridať BATCH", type="primary"):
                 st.session_state.aktualne_objednavky.append({
-                    "Odberateľ": "SKLAD (Sudy)", "Káva": kava_batch, "Gramáž": 0, "Kusy": davky_batch, "Zabalené (ks)": 0, "Potvrdene": True, "Sudy": True, "❌ Zmazať": False
+                    "Odberateľ": "SKLAD (Dávka)", "Káva": kava_batch, "Gramáž": 0, "Kusy": davky_batch, "Zabalené (ks)": 0, "Potvrdene": True, "Sudy": True, "❌ Zmazať": False
                 })
-                auto_uloz(akcia="Nový BATCH (Sudy)", detail=f"{kava_batch}: {davky_batch} dávok")
+                auto_uloz(akcia="Nový BATCH (Dávka)", detail=f"{kava_batch}: {davky_batch} dávok")
                 vynuluj_policka()
                 st.rerun()
 
@@ -1535,5 +1559,164 @@ with tab5:
 # TAB 6: ÚČTOVNÍCTVO
 # ========================================================
 with tab6:
-    st.markdown("### Generovanie exportov pre KROS Omega")
-    st.info("Pripravuje sa...")
+    st.markdown("### Účtovníctvo – export pre KROS Omega")
+
+    SUBOR_CENNIK = "Kalkulacia stefi posledna prazenie 7.9.2026..xlsx"
+    PREKLAD_CENNIK = {"Brazília": "Brazília – Donas do Café", "Etiopia Yerg.": "Etiópia – Yirgacheffe", "Etiopia BG": "Etiópia – Banko Gotiti",
+                      "Honduras": "Honduras – SHG EP San Andrés", "Columbia": "Kolumbia – Huila condor", "Indonezia": "Indinezia",
+                      "India": "India Plantation AA", "Aranka": "Aranka", "Frištuk": "Frištuk", "K52%": "K52% / Cucflek",
+                      "Cucflek": "K52% / Cucflek", "Peru": "Peru", "Rwanda": "Rwanda"}
+    PREKLAD_FAKTURA = {"Brazília": "Brazília – Donas do Café", "Etiopia Yerg.": "Etiópia – Yirgacheffe", "Etiopia BG": "Etiópia – Banko Gotiti",
+                       "Honduras": "Honduras – SHG EP San Andrés", "Columbia": "Kolumbia – Huila condor", "Indonezia": "Indonézia",
+                       "India": "India Plantation AA", "Aranka": "Aranka", "Frištuk": "Frištuk", "K52%": "Kopaničiarska 52%",
+                       "Cucflek": "Cucflek", "Peru": "Peru", "Rwanda": "Rwanda"}
+
+    @st.cache_data
+    def nacitaj_cennik(obsah=None):
+        zdroj = io.BytesIO(obsah) if obsah is not None else SUBOR_CENNIK
+        return pd.read_excel(zdroj, sheet_name='Cenník kávy', skiprows=4)
+
+    df_cennik = None
+    if os.path.exists(SUBOR_CENNIK):
+        try: df_cennik = nacitaj_cennik()
+        except Exception as e: st.error(f"Cenník sa nepodarilo načítať: {e}")
+    else:
+        st.warning(f"Súbor s cenníkom **{SUBOR_CENNIK}** nie je v repozitári pri appke. Nahraj ho sem (hárok „Cenník kávy“):")
+        nahrany_cennik = st.file_uploader("Cenník (.xlsx)", type=["xlsx"], key="upl_cennik")
+        if nahrany_cennik is not None:
+            try: df_cennik = nacitaj_cennik(nahrany_cennik.getvalue())
+            except Exception as e: st.error(f"Cenník sa nepodarilo načítať: {e}")
+
+    # Podklad = expedované (odoslané) riadky
+    aj_fakturovane = st.toggle("Zahrnúť aj už vyfakturované", value=False, key="uct_aj_fakt",
+                               help="Štandardne sa ponúka len to, čo ešte nešlo do Omegy – aby nevznikla faktúra dvakrát.")
+    odoslane_idx = [i for i, o in enumerate(st.session_state.aktualne_objednavky)
+                    if o.get('Potvrdene') and not o.get('Sudy') and not o.get('❌ Zmazať')
+                    and int(o.get('Kusy', 0)) > 0 and (aj_fakturovane or not o.get('Vyfakturované'))]
+    odberatelia_uct = sorted(set(st.session_state.aktualne_objednavky[i]['Odberateľ'] for i in odoslane_idx))
+
+    if not odoslane_idx:
+        st.info("Žiadne expedované položky na fakturáciu. Podkladom sú odoslané zásielky zo záložky EXPED.")
+    elif df_cennik is not None:
+        vyber_uct = st.selectbox("Odberateľ pre export:", ["Všetci"] + odberatelia_uct, key="uct_odberatel")
+        idx_export = [i for i in odoslane_idx if vyber_uct == "Všetci" or st.session_state.aktualne_objednavky[i]['Odberateľ'] == vyber_uct]
+
+        df_vypocet = pd.DataFrame([{**st.session_state.aktualne_objednavky[i], "_idx": i} for i in idx_export])
+        df_vypocet['Hladat_v_cenniku'] = df_vypocet['Káva'].map(PREKLAD_CENNIK).fillna(df_vypocet['Káva'])
+        df_vypocet['Produkt_Faktura'] = df_vypocet['Káva'].map(PREKLAD_FAKTURA).fillna(df_vypocet['Káva'])
+        df_vypocet['Množstvo (ks)'] = df_vypocet['Kusy'].astype(int)
+        df_vypocet['Gramaz_text'] = df_vypocet['Gramáž'].apply(lambda x: "1 000 g" if int(x) == 1000 else f"{int(x)} g")
+        df_vypocet = df_vypocet.drop(columns=['Gramáž'])
+
+        df_export = pd.merge(df_vypocet, df_cennik, left_on=['Hladat_v_cenniku', 'Gramaz_text'], right_on=['Produkt', 'Gramáž'], how='left')
+        bez_ceny = df_export[df_export['Cena pre obchodníka (€)'].isna()]
+        df_export['Cena pre obchodníka (€)'] = df_export['Cena pre obchodníka (€)'].fillna(0).round(2)
+        df_export['Produkt'] = df_export['Produkt_Faktura']
+        df_export['Gramáž'] = df_export['Gramaz_text']
+        df_export = df_export[['Odberateľ', 'Produkt', 'Gramáž', 'Množstvo (ks)', 'Cena pre obchodníka (€)']]
+        df_export = df_export.rename(columns={'Cena pre obchodníka (€)': 'Jednotková cena (€)'})
+        df_export['Celková suma (€)'] = (df_export['Množstvo (ks)'] * df_export['Jednotková cena (€)']).round(2)
+
+        if not bez_ceny.empty:
+            chybaju = ", ".join(sorted(set(f"{r['Hladat_v_cenniku']} {r['Gramaz_text']}" for _, r in bez_ceny.iterrows())))
+            st.error(f"⚠️ V cenníku chýba cena pre: {chybaju}. Vo faktúre budú za 0 €.")
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Odberateľov", df_export['Odberateľ'].nunique())
+        c2.metric("Kusov", int(df_export['Množstvo (ks)'].sum()))
+        c3.metric("Suma spolu", f"{df_export['Celková suma (€)'].sum():.2f} €")
+        st.dataframe(df_export, hide_index=True, use_container_width=True,
+                     column_config={"Jednotková cena (€)": st.column_config.NumberColumn(format="%.2f €"),
+                                    "Celková suma (€)": st.column_config.NumberColumn(format="%.2f €")})
+
+        # --- Excel pre Evičku (štýlovaný) ---
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+            workbook = writer.book
+            worksheet = workbook.add_worksheet('Prehľad pre Evičku')
+            max_row, max_col = df_export.shape
+            if max_row > 0:
+                worksheet.autofilter(0, 0, max_row, max_col - 1)
+                header_format = workbook.add_format({'bold': True, 'bg_color': '#4F81BD', 'font_color': 'white', 'border': 1})
+                for col_num, value in enumerate(df_export.columns):
+                    worksheet.write(0, col_num, str(value), header_format)
+                    max_len = max(df_export[df_export.columns[col_num]].astype(str).map(len).max(), len(str(value))) + 2
+                    worksheet.set_column(col_num, col_num, max_len)
+                format_z1 = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1})
+                format_z2 = workbook.add_format({'bg_color': '#F2F2F2', 'border': 1})
+                for r_idx in range(max_row):
+                    fmt = format_z1 if r_idx % 2 == 0 else format_z2
+                    for c_idx in range(max_col):
+                        cell_val = df_export.iloc[r_idx, c_idx]
+                        if pd.isna(cell_val): worksheet.write(r_idx + 1, c_idx, "", fmt)
+                        elif isinstance(cell_val, (int, float)) or hasattr(cell_val, "item"): worksheet.write_number(r_idx + 1, c_idx, float(cell_val), fmt)
+                        else: worksheet.write(r_idx + 1, c_idx, str(cell_val), fmt)
+        excel_data = excel_buffer.getvalue()
+
+        # --- TXT pre KROS Omega (rovnaký formát ako v starej verzii) ---
+        lines = ["R00\tT01"]
+        today_str = datetime.now().strftime("%d.%m.%Y")
+        due_str = (datetime.now() + timedelta(days=14)).strftime("%d.%m.%Y")
+        invoice_counter = 1
+        for odberatel, group in df_export.groupby('Odberateľ'):
+            cislo_dokladu = f"EXP{datetime.now().strftime('%Y%m%d')}{invoice_counter:02d}"
+            suma_celkom = group['Celková suma (€)'].sum()
+            lines.append("\t".join(["R01", cislo_dokladu, str(odberatel), "", today_str, due_str, today_str, "0.00", f"{suma_celkom:.2f}", "", "", "", "", "", "", "", "", "11"]))
+            for _, row in group.iterrows():
+                lines.append("\t".join(["R02", f"{row['Produkt']} {row['Gramáž']}", str(int(row['Množstvo (ks)'])), "ks", f"{row['Jednotková cena (€)']:.2f}", "V", "0.00", f"{row['Jednotková cena (€)']:.2f}", "0", "V"]))
+            invoice_counter += 1
+        raw_txt_string = "\n".join(lines)
+        txt_data = raw_txt_string.encode('windows-1250', errors='replace')
+
+        meno_do_suboru = "Vsetci" if vyber_uct == "Všetci" else vyber_uct.replace(" ", "_")
+        nazov_excelu = f"Kikiriki_Prehlad_Evicka_{meno_do_suboru}_{st.session_state.nazov_prazenia}.xlsx"
+        nazov_txt = f"Kikiriki_Import_Omega_{meno_do_suboru}_{st.session_state.nazov_prazenia}.txt"
+
+        def cb_txt_stiahnuty(odberatel, txt, indexy):
+            uloz_export_pre_evicku(odberatel, txt)
+            for i in indexy:
+                if i < len(st.session_state.aktualne_objednavky):
+                    st.session_state.aktualne_objednavky[i]['Vyfakturované'] = True
+            st.session_state.pop("tabulka_objednavok", None)
+            auto_uloz(akcia="Export pre Omegu", detail=f"{odberatel}: {len(indexy)} riadkov označených ako vyfakturované")
+
+        col_dl1, col_dl2 = st.columns(2)
+        with col_dl1:
+            st.download_button("📊 Stiahnuť Excel pre Evičku", data=excel_data, file_name=nazov_excelu,
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        with col_dl2:
+            st.download_button("⚙️ Stiahnuť TXT pre KROS + ☁️ Uložiť pre Evičku", data=txt_data, file_name=nazov_txt, mime="text/plain",
+                               on_click=cb_txt_stiahnuty, args=(vyber_uct, raw_txt_string, idx_export), type="primary", use_container_width=True)
+        st.caption("Stiahnutím TXT sa export uloží do archívu pre Evičku a položky sa označia ako vyfakturované.")
+
+    # --- ARCHÍV PRE EVIČKU ---
+    st.divider()
+    with st.expander("🔒 Archív exportov pre Evičku"):
+        odomknute_uct = st.session_state.get("admin_odomknute", False) or st.session_state.get("evicka_odomknute", False)
+        if not odomknute_uct:
+            if not st.secrets.get("evicka_heslo", ""):
+                st.caption("Prístup Evičky nastavíš v Secrets (kľúč `evicka_heslo`). Ty sa sem dostaneš aj cez zámok 🔒 vpravo hore.")
+            with st.form("form_evicka", clear_on_submit=True):
+                heslo_e = st.text_input("Heslo:", type="password")
+                ok_e = st.form_submit_button("Otvoriť archív")
+            if ok_e:
+                spravne_e = st.secrets.get("evicka_heslo", "")
+                if (spravne_e and hmac.compare_digest(str(heslo_e), str(spravne_e))) or over_heslo(heslo_e):
+                    st.session_state.evicka_odomknute = True
+                    st.rerun()
+                else:
+                    st.error("Nesprávne heslo.")
+        else:
+            if st.button("📥 Načítať dostupné exporty", key="btn_evicka"):
+                st.session_state.evicka_exporty = nacitaj_exporty_pre_evicku()
+            exporty = st.session_state.get("evicka_exporty")
+            if exporty is not None:
+                if not exporty:
+                    st.info("Archív je zatiaľ prázdny.")
+                else:
+                    idx_e = st.selectbox("Vyber export:", list(range(len(exporty))),
+                                         format_func=lambda i: f"{exporty[i][0]} | Odberateľ: {exporty[i][1]}", key="evicka_vyber")
+                    vybrany = exporty[idx_e]
+                    st.download_button("⚙️ Stiahnuť vybraný TXT pre KROS Omegu", data=vybrany[2].encode('windows-1250', errors='replace'),
+                                       file_name=f"Kikiriki_Omega_{vybrany[0][:10].replace('.', '')}_{str(vybrany[1]).replace(' ', '_')}.txt",
+                                       mime="text/plain", type="primary", use_container_width=True)
