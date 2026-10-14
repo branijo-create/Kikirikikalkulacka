@@ -70,7 +70,9 @@ st.markdown(firemny_dizajn, unsafe_allow_html=True)
 KAPACITA_ZELENA_BATCH = 5.0
 STANDARDNY_VYPEK = 20
 DNESNY_DATUM = datetime.now().strftime("%d-%m-%Y")
-NAZOV_TABULKY_ZALOHA = "Kikiriki_DB_2026"
+
+# OPRAVENÉ: Návrat k tvojmu pôvodnému a funkčnému názvu
+NAZOV_TABULKY_ZALOHA = "Kikiriki_Zaloha_PRO"
 
 kavy_recepty = {
     "Brazília": {"vypek": STANDARDNY_VYPEK, "recept": {"Brazília Santos": 1.0}},
@@ -220,7 +222,7 @@ col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 7.6 | Výrobný manažment")
+    st.caption("Verzia 7.7 | Výrobný manažment")
 
 with col_head_right:
     if os.path.exists("logo.png"):
@@ -545,7 +547,7 @@ with tab2:
         for zrno, teoreticka_vaha_zelena in potreba_zelenej_podla_zrna.items():
             davky_plan = math.ceil(teoreticka_vaha_zelena / KAPACITA_ZELENA_BATCH)
             
-            # Načítanie stavu z cloudu (s prechodom na nový systém "davky_hotovo")
+            # Načítanie stavu z cloudu
             stav_z_cloudu = st.session_state.priebeh_prazenia.get(zrno, {})
             if "davky_hotovo" not in stav_z_cloudu:
                 if stav_z_cloudu.get("hotovo") == True:
@@ -663,7 +665,7 @@ with tab3:
             st.markdown("---")
 
 # ========================================================
-# TAB 4: SKLAD (Nové čítanie čiastkových dávok)
+# TAB 4: SKLAD
 # ========================================================
 with tab4:
     st.markdown("### Aktuálny stav skladu (Dózy)")
@@ -671,7 +673,6 @@ with tab4:
     
     stav_doz = {}
     for zrno, data in st.session_state.priebeh_prazenia.items():
-        # Pripočíta do skladu aj keď nie je upečené všetko, ale aspoň nejaké dávky už sú
         if data.get("davky_hotovo", 0) > 0 or data.get("hotovo"):
             stav_doz[zrno] = stav_doz.get(zrno, 0.0) + data.get("uprazena_real", 0.0)
             
@@ -701,7 +702,7 @@ with tab5:
     st.info("Pripravuje sa...")
 
 # ========================================================
-# NÚDZOVÝ SERVISNÝ PANEL (ÚPLNE DOLE)
+# NÚDZOVÝ SERVISNÝ PANEL
 # ========================================================
 st.divider()
 with st.expander("🛠️ Servisný panel (Oprava Google Disku)"):
