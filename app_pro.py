@@ -10,7 +10,7 @@ import json
 st.set_page_config(page_title="Kikiriki Roastery PRO", page_icon="☕", layout="wide")
 
 # ==========================================
-# 🎨 FIREMNÝ DIZAJN (BARLOW & VEĽKÉ BOLD ZÁLOŽKY)
+# 🎨 FIREMNÝ DIZAJN (NEMENNÝ STAV)
 # ==========================================
 firemny_dizajn = """
 <style>
@@ -36,7 +36,6 @@ firemny_dizajn = """
         font-size: 2.2rem !important;
     }
 
-    /* VYNÚTENIE VÄČŠIEHO FONTU A FIREMNÝCH FARIEB PRE CELÚ LIŠTU ZÁLOŽIEK */
     div[data-testid="stTabs"] button {
         padding: 8px 20px !important;
     }
@@ -54,7 +53,6 @@ firemny_dizajn = """
         border-bottom: 3px solid #2B5098 !important;
     }
 
-    /* Vylepšenie tlačidiel a tabuliek */
     .stDataFrame, th, td, .stButton>button {
         font-weight: 600 !important;
     }
@@ -86,7 +84,7 @@ kavy_recepty = {
 
 gramaze_list = [220, 500, 1000]
 
-# --- GOOGLE API FUNKCIE ---
+# --- GOOGLE API FUNKCIE (ROBUSTNÁ VERZIA) ---
 @st.cache_resource
 def get_google_credentials():
     from google.oauth2.service_account import Credentials
@@ -101,25 +99,35 @@ def nacitaj_z_google_sheets():
         import gspread
         creds = get_google_credentials()
         client = gspread.authorize(creds)
-        try: spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
+        
+        # Ošetrenie chýbajúceho hárka
+        try: 
+            spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
         except gspread.exceptions.SpreadsheetNotFound:
             spreadsheet = client.create(NAZOV_TABULKY_ZALOHA)
             spreadsheet.share(None, perm_type='anyone', role='writer')
             
         sheet = spreadsheet.sheet1
-        try:
-            hodnoty = sheet.row_values(1)
-            val_data = hodnoty[0] if len(hodnoty) > 0 else None
-            val_cas = hodnoty[1] if len(hodnoty) > 1 else "Neznámy čas"
-            val_nazov = hodnoty[2] if len(hodnoty) > 2 and hodnoty[2].strip() != "" else ""
-        except:
-            val_data, val_cas, val_nazov = None, "Neznámy čas", ""
+        hodnoty = sheet.row_values(1)
+        
+        # Ošetrenie prázdnych dát
+        val_data = hodnoty[0] if len(hodnoty) > 0 else None
+        val_cas = hodnoty[1] if len(hodnoty) > 1 else "Neznámy čas"
+        val_nazov = hodnoty[2] if len(hodnoty) > 2 else ""
+        
+        if val_data and val_data.strip():
+            data = json.loads(val_data)
+        else:
+            data = {"objednavky": [], "prazenie": {}}
             
-        data = json.loads(val_data) if val_data else {"objednavky": [], "prazenie": {}}
-        if isinstance(data, list): data = {"objednavky": data, "prazenie": {}}
+        # Zabezpečenie správnej štruktúry pre staršie zálohy
+        if isinstance(data, list): 
+            data = {"objednavky": data, "prazenie": {}}
+            
         return data, val_cas, val_nazov
     except Exception as e:
-        return None, None, None
+        # Vráti presnú chybu, ak sa niečo pokazí
+        return None, str(e), None
 
 def uloz_do_google_sheets(data_dict, nazov_prazenia):
     try:
@@ -129,12 +137,19 @@ def uloz_do_google_sheets(data_dict, nazov_prazenia):
         spreadsheet = client.open(NAZOV_TABULKY_ZALOHA)
         sheet1 = spreadsheet.sheet1
         cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        sheet1.update_acell('A1', json.dumps(data_dict, ensure_ascii=False))
-        sheet1.update_acell('B1', cas_ulozenia)
-        sheet1.update_acell('C1', str(nazov_prazenia))
-        return True
+        
+        # ZLÚČENIE DO JEDNÉHO API VOLANIA (Zabraňuje prekročeniu limitov Google)
+        hodnoty = [[json.dumps(data_dict, ensure_ascii=False), cas_ulozenia, str(nazov_prazenia)]]
+        
+        try:
+            sheet1.update(values=hodnoty, range_name='A1:C1')
+        except TypeError:
+            # Fallback pre staršie verzie knižnice gspread
+            sheet1.update('A1:C1', hodnoty)
+            
+        return True, None
     except Exception as e:
-        return False
+        return False, str(e)
 
 def auto_uloz():
     aktualny_nazov = st.session_state.get('nazov_prazenia', f"Prazenie_PRO_{DNESNY_DATUM}")
@@ -142,11 +157,15 @@ def auto_uloz():
         "objednavky": st.session_state.aktualne_objednavky,
         "prazenie": st.session_state.priebeh_prazenia
     }
-    uloz_do_google_sheets(data_na_ulozenie, aktualny_nazov)
+    uspech, chyba = uloz_do_google_sheets(data_na_ulozenie, aktualny_nazov)
+    
+    # Viditeľná notifikácia pri tichom zlyhaní!
+    if not uspech:
+        st.toast(f"⚠️ Zlyhalo automatické ukladanie: {chyba}", icon="❌")
 
 def nacitaj_vsetko_z_cloudu_callback():
     zaloha_dict, cas_poslednej_upravy, n_prazenia = nacitaj_z_google_sheets()
-    if zaloha_dict:
+    if zaloha_dict is not None:
         st.session_state.aktualne_objednavky = zaloha_dict.get("objednavky", [])
         st.session_state.priebeh_prazenia = zaloha_dict.get("prazenie", {})
         if n_prazenia:
@@ -155,21 +174,23 @@ def nacitaj_vsetko_z_cloudu_callback():
         st.session_state.info_cloud = f"Synchronizované: {len(aktivne)} položiek | Posledná úprava: {cas_poslednej_upravy}"
         st.session_state.msg_uspech = True
     else:
-        st.session_state.info_cloud = "Synchronizované: Prázdny stôl."
+        st.session_state.info_cloud = f"Chyba synchronizácie: {cas_poslednej_upravy}"
         st.session_state.msg_chyba = True
 
 # --- AUTO-LOAD PRI ŠTARTE ---
 if 'aktualne_objednavky' not in st.session_state:
     zaloha_dict, cas, n_prazenia = nacitaj_z_google_sheets()
-    if zaloha_dict:
+    if zaloha_dict is not None:
         st.session_state.aktualne_objednavky = zaloha_dict.get("objednavky", [])
         st.session_state.priebeh_prazenia = zaloha_dict.get("prazenie", {})
+        aktivne_start = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
+        st.session_state.info_cloud = f"Synchronizované: {len(aktivne_start)} položiek | Posledná úprava: {cas}"
     else:
         st.session_state.aktualne_objednavky = []
         st.session_state.priebeh_prazenia = {}
+        st.session_state.info_cloud = f"Záloha nenájdená. Začíname s čistým stolom. (Detail: {cas})"
+        
     st.session_state.pociatocny_nazov = n_prazenia if n_prazenia else f"Prazenie_PRO_{DNESNY_DATUM}"
-    aktivne_start = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
-    st.session_state.info_cloud = f"Synchronizované: {len(aktivne_start)} položiek | Posledná úprava: {cas}"
 
 if 'nazov_prazenia' not in st.session_state:
     st.session_state.nazov_prazenia = st.session_state.get('pociatocny_nazov', f"Prazenie_PRO_{DNESNY_DATUM}")
@@ -182,7 +203,7 @@ col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 7.1 | Výrobný manažment")
+    st.caption("Verzia 7.2 | Výrobný manažment (Fix Cloudu)")
 
 with col_head_right:
     if os.path.exists("logo.png"):
@@ -204,7 +225,7 @@ with col_head_right:
 st.text_input("Identifikátor praženia:", key="nazov_prazenia", on_change=auto_uloz)
 
 # ========================================================
-# 🚀 ZÁLOŽKY PRIAMO S BOLDOM
+# 🚀 ZÁLOŽKY 
 # ========================================================
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "**OBJEDNÁVKY**", 
@@ -229,7 +250,7 @@ with tab1:
     if st.session_state.pop('msg_uspech', False):
         st.success("Dáta úspešne stiahnuté a zosynchronizované.")
     if st.session_state.pop('msg_chyba', False):
-        st.warning("Záloha na Google Drive je zatiaľ prázdna.")
+        st.error("Nepodarilo sa načítať zálohu z Cloudu.")
 
     col_load, col_save = st.columns(2)
     with col_load:
@@ -238,7 +259,7 @@ with tab1:
             st.rerun()
 
     with col_save:
-        if st.button("Uložiť aktuálny stav do Cloudu", type="primary", use_container_width=True):
+        if st.button("Vynútiť uloženie do Cloudu", type="primary", use_container_width=True):
             auto_uloz()
             cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
             aktivne = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
