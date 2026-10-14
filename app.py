@@ -5,7 +5,7 @@ import io
 from datetime import datetime, timedelta
 import json
 
-st.set_page_config(page_title="Roastery Manager v4.1", page_icon="☕", layout="wide")
+st.set_page_config(page_title="Roastery Manager v4.2", page_icon="☕", layout="wide")
 
 # --- KONFIGURÁCIA Z TVOJHO KÓDU ---
 KAPACITA_ZELENA_BATCH = 5.0
@@ -174,7 +174,6 @@ def uloz_dennik_prazenia(nazov, davky, zelena_kg, uprazena_plan_kg, uprazena_rea
     except Exception as e:
         return False
 
-# NOVÁ FUNKCIA: NAČÍTANIE HISTÓRIE PRE ŠTATISTIKY
 def nacitaj_dennik_prazenia():
     try:
         import gspread
@@ -184,7 +183,7 @@ def nacitaj_dennik_prazenia():
         try:
             dennik_sheet = spreadsheet.worksheet("Dennik_Prazenia")
         except:
-            return pd.DataFrame() # Ešte neexistuje
+            return pd.DataFrame() 
         zaznamy = dennik_sheet.get_all_values()
         if len(zaznamy) > 1:
             df = pd.DataFrame(zaznamy[1:], columns=zaznamy[0])
@@ -267,11 +266,10 @@ with st.sidebar:
                 )
 
 # --- HLAVNÉ ROZHRANIE ---
-st.title("☕ Roastery Manager v4.1")
+st.title("☕ Roastery Manager v4.2")
 
 st.text_input("📅 Názov aktuálneho praženia (Tento názov si systém pamätá, neprepisuj ho každý deň):", key="nazov_prazenia", on_change=auto_uloz)
 
-# PRIDANÁ TRETIA ZÁLOŽKA
 tab1, tab2, tab3 = st.tabs(["🛒 1. Objednávky a Praženie", "📦 2. Kontrola balenia a Export", "📊 3. Štatistiky a Denník"])
 
 # ========================================================
@@ -358,7 +356,8 @@ with tab1:
     col1, col2 = st.columns(2)
     with col1:
         meno = st.text_input("Odberateľ:", placeholder="Meno")
-        rezim = st.radio("Režim zadávania:", ["Podľa kávy", "Podľa gramáže"], horizontal=True, on_change=vynuluj_policka)
+        # NOVINKA: Tretí zelený režim
+        rezim = st.radio("Režim zadávania:", ["Podľa kávy", "Podľa gramáže", "🟢 Pridať celý BATCH (Zelená)"], horizontal=True, on_change=vynuluj_policka)
 
     if rezim == "Podľa kávy":
         with col1:
@@ -375,7 +374,8 @@ with tab1:
             auto_uloz()
             vynuluj_policka()
             st.rerun()
-    else:
+
+    elif rezim == "Podľa gramáže":
         with col1:
             gramaz = st.selectbox("Gramáž:", gramaze_list, on_change=vynuluj_policka)
         with col2:
@@ -390,6 +390,33 @@ with tab1:
             auto_uloz()
             vynuluj_policka()
             st.rerun()
+
+    # --- ZELENÝ BATCH MÓD ---
+    elif rezim == "🟢 Pridať celý BATCH (Zelená)":
+        with st.container():
+            st.success("🟢 **Režim: Praženie do Sudu** – Káva sa pripočíta do rozpisu praženia, ale nežiada žiadne etikety ani sáčky.")
+            col_b1, col_b2 = st.columns(2)
+            with col_b1:
+                kava_batch = st.selectbox("Káva do pražičky:", list(kavy_recepty.keys()), key=f"kava_b_{st.session_state.form_key}")
+            with col_b2:
+                davky_batch = st.number_input("Počet celých dávok (á 5kg zelenej):", min_value=1, step=1, key=f"davky_b_{st.session_state.form_key}")
+                
+            st.markdown(f"*(ℹ️ Pridáš **{davky_batch * KAPACITA_ZELENA_BATCH} kg** zelenej kávy)*")
+            
+            if st.button("➕ Pridať BATCH do praženia", type="primary"):
+                st.session_state.aktualne_objednavky.append({
+                    "Odberateľ": "📦 SKLAD (Sudy)",
+                    "Káva": kava_batch,
+                    "Gramáž": 0,  # Ukáže nulu pre vizuál
+                    "Kusy": davky_batch, # V tomto prípade znamená "Kusy" = počet celých BATCHOV
+                    "Zabalené (ks)": 0,
+                    "Potvrdene": True,
+                    "Sudy": True, # Špeciálna vlajka, ignorovaná pri balení!
+                    "❌ Zmazať": False
+                })
+                auto_uloz()
+                vynuluj_policka()
+                st.rerun()
 
     st.divider()
 
@@ -435,9 +462,15 @@ with tab1:
                 potreba_uprazenej_podla_zrna = {}
                 potreba_skladania_blendov = {}
                 
+                # --- ÚPRAVA VÝPOČTU: RÁTA AJ SO SUDMI! ---
                 for o in aktivne_objednavky:
-                    uprazena_kg = (o["Kusy"] * o["Gramáž"] / 1000.0)
-                    zelena_kg_zaklad = uprazena_kg / (1 - (STANDARDNY_VYPEK / 100.0))
+                    if o.get("Sudy", False):
+                        # Sudy zadávajú "kusy" ako počet 5kg dávok
+                        zelena_kg_zaklad = o["Kusy"] * KAPACITA_ZELENA_BATCH
+                        uprazena_kg = zelena_kg_zaklad * (1 - (STANDARDNY_VYPEK / 100.0))
+                    else:
+                        uprazena_kg = (o["Kusy"] * o["Gramáž"] / 1000.0)
+                        zelena_kg_zaklad = uprazena_kg / (1 - (STANDARDNY_VYPEK / 100.0))
                     
                     if o["Káva"] in kavy_recepty:
                         if len(kavy_recepty[o["Káva"]]["recept"]) > 1:
@@ -490,14 +523,19 @@ with tab1:
                 
                 df_blendov = pd.DataFrame(finalny_plan_blendov) if finalny_plan_blendov else pd.DataFrame()
                 
-                df_sum_obalov = df_objednavky_export.groupby(['Káva', 'Gramáž'])['Kusy'].sum().reset_index()
-                sum_pivot_ex = df_sum_obalov.pivot(index='Káva', columns='Gramáž', values='Kusy').fillna(0).astype(int)
-                for g in [220, 500, 1000]:
-                    if g not in sum_pivot_ex.columns: sum_pivot_ex[g] = 0
-                sum_pivot_ex['Spolu etikiet'] = sum_pivot_ex.sum(axis=1)
-                sum_pivot_ex.loc['🔥 SPOLU SÁČKOV'] = sum_pivot_ex.sum(numeric_only=True)
-                sum_pivot_ex = sum_pivot_ex[['Spolu etikiet', 220, 500, 1000]].reset_index()
-                sum_pivot_ex.rename(columns={'index': 'Káva', 220: '220g', 500: '500g', 1000: '1000g'}, inplace=True) 
+                # --- EXCEL SUMÁR OBALOV: Filtruje preč Sudy! ---
+                df_objednavky_export_balenie = [o for o in aktivne_objednavky if not o.get('Sudy', False)]
+                if df_objednavky_export_balenie:
+                    df_sum_obalov = pd.DataFrame(df_objednavky_export_balenie).groupby(['Káva', 'Gramáž'])['Kusy'].sum().reset_index()
+                    sum_pivot_ex = df_sum_obalov.pivot(index='Káva', columns='Gramáž', values='Kusy').fillna(0).astype(int)
+                    for g in [220, 500, 1000]:
+                        if g not in sum_pivot_ex.columns: sum_pivot_ex[g] = 0
+                    sum_pivot_ex['Spolu etikiet'] = sum_pivot_ex.sum(axis=1)
+                    sum_pivot_ex.loc['🔥 SPOLU SÁČKOV'] = sum_pivot_ex.sum(numeric_only=True)
+                    sum_pivot_ex = sum_pivot_ex[['Spolu etikiet', 220, 500, 1000]].reset_index()
+                    sum_pivot_ex.rename(columns={'index': 'Káva', 220: '220g', 500: '500g', 1000: '1000g'}, inplace=True) 
+                else:
+                    sum_pivot_ex = pd.DataFrame(columns=['Káva', 'Spolu etikiet', '220g', '500g', '1000g'])
 
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
@@ -581,7 +619,8 @@ with tab2:
     st.divider()
 
     if st.session_state.aktualne_objednavky:
-        aktivne_balenie = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False)]
+        # V TAB 2 COMPLETNE FILTRUJEME "SUDY", ZOSTÁVAJÚ LEN SÁČKY
+        aktivne_balenie = [o for o in st.session_state.aktualne_objednavky if not o.get('❌ Zmazať', False) and not o.get('Sudy', False)]
         
         st.markdown("### 📱 Filtre pre Sklad a Balenie")
         col_f1, col_f2 = st.columns(2)
@@ -653,6 +692,7 @@ with tab2:
         def zmena_balenia_callback(index_v_liste):
             novy_pocet = st.session_state[f"pocet_{index_v_liste}"]
             potvrdene = st.session_state[f"chk_{index_v_liste}"]
+            # Nájdeme index v hlavnom poli na základe indexu z vyfiltrovaného poľa
             st.session_state.aktualne_objednavky[index_v_liste]['Zabalené (ks)'] = novy_pocet
             st.session_state.aktualne_objednavky[index_v_liste]['Potvrdene'] = potvrdene
             auto_uloz() 
@@ -660,7 +700,8 @@ with tab2:
         st.info("Karta zasvieti nazeleno až vtedy, keď odškrtneš balenie. Všetko sa okamžite a samo ukladá do Google Disku.")
 
         for i, obj in enumerate(st.session_state.aktualne_objednavky):
-            if obj.get('❌ Zmazať', False): continue
+            # Preskočíme zmazané aj Sudy!
+            if obj.get('❌ Zmazať', False) or obj.get('Sudy', False): continue
                 
             zhoda_odb = (filter_odb == "Všetci" or obj['Odberateľ'] == filter_odb)
             zhoda_kava = (filter_kava == "Všetky" or obj['Káva'] == filter_kava)
@@ -803,7 +844,6 @@ with tab3:
         
         st.markdown("#### 📅 Súhrn po mesiacoch")
         df_m = df_d.copy()
-        # Vytvoríme čistý mesiac z pomocného dátumového stĺpca
         df_m['Mesiac_Zoradenie'] = df_m['Dátum_sort'].dt.to_period('M')
         df_m['Mesiac'] = df_m['Dátum_sort'].dt.strftime('%m / %Y')
         
