@@ -9,35 +9,62 @@ import json
 st.set_page_config(page_title="Kikiriki Roastery PRO", page_icon="☕", layout="wide")
 
 # ==========================================
-# 🎨 FIREMNÝ DIZAJN (BARLOW & FARBY)
+# 🎨 FIREMNÝ DIZAJN (BARLOW, BOLD & FARBY)
 # ==========================================
 firemny_dizajn = """
 <style>
     /* Natiahnutie fontov Barlow a Barlow Condensed z Google Fonts */
-    @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap');
 
-    /* Aplikovanie klasického Barlow na celý bežný text */
+    /* Aplikovanie klasického Barlow na celý bežný text s dôrazom na čitateľnosť */
     html, body, [class*="css"] {
         font-family: 'Barlow', sans-serif !important;
+        font-weight: 500;
     }
 
-    /* Aplikovanie Barlow Condensed vo firemnej modrej na všetky nadpisy */
-    h1, h2, h3 {
+    /* Vynútenie tučného písma pre všetky nadpisy a dôležité prvky */
+    h1, h2, h3, .stMarkdown h3 {
         font-family: 'Barlow Condensed', sans-serif !important;
         color: #2B5098 !important;
         text-transform: uppercase;
         letter-spacing: 0.5px;
+        font-weight: 700 !important;
     }
     
-    /* Zvýraznenie metrík (veľké čísla v dózach) firemnou modrou */
+    /* Zvýraznenie metrík (veľké čísla v dózach) tučnou firemnou modrou */
     [data-testid="stMetricValue"] {
         font-family: 'Barlow Condensed', sans-serif !important;
         color: #2B5098 !important;
+        font-weight: 700 !important;
+    }
+
+    /* Tučné texty v tabuľkách a dátových bunkách */
+    .stDataFrame, th, td {
+        font-weight: 600 !important;
+    }
+
+    /* Vylepšenie kontrastu pre tlačidlá a vstupy */
+    .stButton>button {
+        font-weight: 600 !important;
     }
 </style>
 """
 st.markdown(firemny_dizajn, unsafe_allow_html=True)
 # ==========================================
+
+# --- FIREMNÉ LOGO (SVG) ---
+logo_html = """
+<div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" fill="#2B5098"/>
+    </svg>
+    <div>
+        <h1 style="margin: 0; font-size: 2.2rem; line-height: 1.1;">KIKIRIKI ROASTERY PRO</h1>
+        <p style="margin: 0; color: #555; font-weight: 600; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 1px;">Výrobný a produkčný manažment</p>
+    </div>
+</div>
+"""
+st.markdown(logo_html, unsafe_allow_html=True)
 
 # --- KONFIGURÁCIA ---
 KAPACITA_ZELENA_BATCH = 5.0
@@ -155,12 +182,9 @@ if 'form_key' not in st.session_state: st.session_state.form_key = 0
 def vynuluj_policka(): st.session_state.form_key += 1
 
 # --- HLAVNÉ ROZHRANIE ---
-st.title("Kikiriki Roastery PRO")
-st.caption("Verzia 6.0 | Výrobný manažment")
-
 st.text_input("Identifikátor praženia:", key="nazov_prazenia", on_change=auto_uloz)
 
-# Čisté záložky bez pokazených ikon
+# Záložky s čistým tučným písmom
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "OBJEDNÁVKY", 
     "PRAŽIAREŇ", 
