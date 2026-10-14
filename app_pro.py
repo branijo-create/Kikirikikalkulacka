@@ -251,7 +251,6 @@ def inicializuj_sklad(nacitany_sklad):
         sklad["uprazena"] = nacitany_sklad.get("uprazena", {})
         sklad["zabalena"] = nacitany_sklad.get("zabalena", {})
     
-    # Doplnenie chýbajúcich SKU (Nové karty)
     for sku in SKU_ZELENA.values():
         if sku not in sklad["zelena"]: sklad["zelena"][sku] = 0.0
     for sku in SKU_UPRAZENA.values():
@@ -301,7 +300,7 @@ def vynuluj_policka(): st.session_state.form_key += 1
 col_head_left, col_head_right = st.columns([3, 1])
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 8.5 | Pevný Sklad a ERP Kódy (SKU)")
+    st.caption("Verzia 8.6 | Výroba, Sklad & ERP Kódy")
 with col_head_right:
     if os.path.exists("logo.png"): st.image("logo.png", width=110)
     elif os.path.exists("logo.svg"): st.image("logo.svg", width=110)
@@ -332,6 +331,35 @@ with tab1:
             auto_uloz()
             st.success("Aktuálny zoznam uložený.")
             st.rerun()
+
+    st.divider()
+
+    st.markdown("### Import údajov")
+    nahraty_subor = st.file_uploader("Nahraj .xlsx súbor z tabuľky", type=["xlsx"])
+    if nahraty_subor is not None:
+        try:
+            xl = pd.ExcelFile(nahraty_subor)
+            df_import = xl.parse('Spracovane_Objednavky') if 'Spracovane_Objednavky' in xl.sheet_names else xl.parse(0)
+            if st.button("Spracovať Excel a pridať objednávky", type="primary"):
+                for index, row in df_import.iterrows():
+                    kusy_zaklad = int(row.get("Kusy", 0))
+                    potvrdene_hist = bool(row.get("Potvrdene", False))
+                    sudy_hist = bool(row.get("Sudy", False)) if pd.notna(row.get("Sudy")) else False
+                    st.session_state.aktualne_objednavky.append({
+                        "Odberateľ": str(row.get("Odberateľ", "Neznámy")),
+                        "Káva": str(row.get("Káva", "")),
+                        "Gramáž": int(row.get("Gramáž", 0)),
+                        "Kusy": kusy_zaklad,
+                        "Zabalené (ks)": 0,
+                        "Potvrdene": potvrdene_hist,
+                        "Sudy": sudy_hist,
+                        "❌ Zmazať": False
+                    })
+                auto_uloz()
+                st.success("Dáta importované a uložené do cloudu.")
+                st.rerun()
+        except Exception as e:
+            st.error("Chyba pri spracovaní Excelu.")
 
     st.divider()
 
@@ -425,7 +453,6 @@ with tab1:
                     st.rerun()
             with col_del2:
                 if st.button("Vyčistiť stôl (Nový víkend)", type="secondary"):
-                    # OPRAVA: Resetujú sa len aktuálne požiadavky. SKLAD sa zachováva.
                     st.session_state.aktualne_objednavky = []
                     st.session_state.priebeh_prazenia = {} 
                     auto_uloz()
@@ -533,7 +560,6 @@ with tab2:
                         nova_zelena = pridat_davky * KAPACITA_ZELENA_BATCH
                         nova_uprazena = nova_zelena * (1 - (STANDARDNY_VYPEK / 100.0))
                         
-                        # Zápis do praženia zmeny
                         st.session_state.priebeh_prazenia[zrno] = {
                             "davky_hotovo": davky_hotovo + pridat_davky,
                             "zelena_real": stav_z_cloudu.get("zelena_real", 0.0) + nova_zelena,
@@ -541,7 +567,7 @@ with tab2:
                             "hotovo": (davky_hotovo + pridat_davky) >= davky_plan
                         }
                         
-                        # ZÁPIS DO PEVNÉHO SKLADU (Kaskádový prevod)
+                        # ZÁPIS DO PEVNÉHO SKLADU
                         gc_sku = SKU_ZELENA.get(zrno)
                         rc_sku = SKU_UPRAZENA.get(zrno)
                         if gc_sku: st.session_state.sklad["zelena"][gc_sku] -= nova_zelena
@@ -643,7 +669,6 @@ with tab3:
                                 pridavam = st.session_state[f"add_bag_{k}_{g}"]
                                 if pridavam > 0:
                                     zvysok_na_rozdelenie = pridavam
-                                    # Zápis do zoznamu objednávok pre vizuál
                                     for idx, obj in enumerate(st.session_state.aktualne_objednavky):
                                         if obj.get('❌ Zmazať') or obj.get('Sudy') or obj.get('Potvrdene'): continue
                                         if obj['Káva'] == k and obj['Gramáž'] == g:
@@ -655,20 +680,17 @@ with tab3:
                                                 zvysok_na_rozdelenie -= dam
                                             if zvysok_na_rozdelenie == 0: break
                                     
-                                    # ZÁPIS DO PEVNÉHO SKLADU (Kaskádový prevod)
+                                    # ZÁPIS DO PEVNÉHO SKLADU
                                     vaha_do_sackov = pridavam * g / 1000.0
                                     rc_kod_kavy = MENU_KAVY.get(k)
                                     pc_sku = get_pc_sku(rc_kod_kavy, g)
                                     
-                                    # Pripočíta do regálu sáčkov
                                     st.session_state.sklad["zabalena"][pc_sku] = st.session_state.sklad["zabalena"].get(pc_sku, 0) + pridavam
                                     
-                                    # Odpočíta suroviny z Dóz (podľa receptu)
                                     if k in kavy_recepty:
                                         for zrno, podiel in kavy_recepty[k]["recept"].items():
                                             zrno_sku = SKU_UPRAZENA.get(zrno)
-                                            if zrno_sku:
-                                                st.session_state.sklad["uprazena"][zrno_sku] -= (vaha_do_sackov * podiel)
+                                            if zrno_sku: st.session_state.sklad["uprazena"][zrno_sku] -= (vaha_do_sackov * podiel)
                                     
                                     auto_uloz()
                                 st.session_state[f"add_bag_{k}_{g}"] = 0
@@ -781,11 +803,9 @@ with tab5:
                     if st.button(f"Expedovať všetko pre: {odb}", key=f"exp_{odb}", type="primary"):
                         for i, o in enumerate(st.session_state.aktualne_objednavky):
                             if o.get('Odberateľ') == odb and not o.get('Potvrdene') and not o.get('❌ Zmazať'):
-                                # ZÁPIS DO PEVNÉHO SKLADU (Odpísanie expedície)
                                 rc_kod = MENU_KAVY.get(o['Káva'])
                                 pc_sku = get_pc_sku(rc_kod, o['Gramáž'])
                                 st.session_state.sklad["zabalena"][pc_sku] -= o['Kusy']
-                                
                                 st.session_state.aktualne_objednavky[i]['Potvrdene'] = True
                         auto_uloz()
                         st.rerun()
@@ -810,7 +830,6 @@ with tab5:
                         rc_kod = MENU_KAVY.get(obj['Káva'])
                         pc_sku = get_pc_sku(rc_kod, obj['Gramáž'])
                         
-                        # Vrátenie zo skladu alebo odoslanie
                         if not val: st.session_state.sklad["zabalena"][pc_sku] += obj['Kusy']
                         else: st.session_state.sklad["zabalena"][pc_sku] -= obj['Kusy']
                         auto_uloz()
