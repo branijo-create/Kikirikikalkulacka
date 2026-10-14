@@ -602,7 +602,7 @@ def logo_html():
 col_head_left, col_head_lock, col_head_logo = st.columns([14, 1, 2], vertical_alignment="center")
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 9.1 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 9.2 | Výroba, Sklad & ERP Kódy")
 with col_head_lock:
     ikona = "🔓" if st.session_state.get("admin_odomknute", False) else "🔒"
     if st.button(ikona, key="btn_zamok", help="Inventúra, log a obnova"):
@@ -951,15 +951,53 @@ with tab3:
             
         st.divider()
 
-        st.markdown("#### 📦 Úlohy pre baliča (Sáčkovanie)")
+        # Zákazníci s neexpedovanými objednávkami (pre roletku)
+        VSETCI = "Všetci zákazníci"
+        zostava_zak = {}
+        for o in aktivne_balenie:
+            if o.get('Potvrdene'): continue
+            zostava_zak[o['Odberateľ']] = zostava_zak.get(o['Odberateľ'], 0) + max(0, int(o['Kusy']) - int(o.get('Zabalené (ks)', 0)))
+        moznosti_zak = [VSETCI] + sorted(zostava_zak)
+        if st.session_state.get("balenie_zakaznik") not in moznosti_zak:
+            st.session_state.balenie_zakaznik = VSETCI
+
+        def popis_zakaznika(z):
+            if z == VSETCI: return VSETCI
+            return f"✅ {z} – nabalené" if zostava_zak[z] == 0 else f"{z} – zostáva {zostava_zak[z]} ks"
+
+        col_ul, col_zak = st.columns([3, 2], vertical_alignment="bottom")
+        with col_ul:
+            st.markdown("#### 📦 Úlohy pre baliča (Sáčkovanie)")
+        with col_zak:
+            vybrany_zak = st.selectbox("Balím pre:", moznosti_zak, format_func=popis_zakaznika, key="balenie_zakaznik")
+
         msg_bal = st.session_state.pop("msg_balenie", None)
         if msg_bal: st.info(msg_bal)
 
-        def pridaj_sacky(k, g, pridavam):
-            """Zapíše presne `pridavam` sáčkov. Vráti počet kusov navyše nad otvorené objednávky."""
+        if vybrany_zak == VSETCI:
+            plan_ulohy = plan_balenia
+            prednost = None
+        else:
+            prednost = vybrany_zak
+            plan_ulohy = {}
+            for o in aktivne_balenie:
+                if o['Odberateľ'] != vybrany_zak or o.get('Potvrdene'): continue
+                kluc = f"{o['Káva']}_{o['Gramáž']}"
+                if kluc not in plan_ulohy: plan_ulohy[kluc] = {"kava": o['Káva'], "gramaz": o['Gramáž'], "ciel": 0, "hotovo": 0}
+                plan_ulohy[kluc]["ciel"] += int(o['Kusy'])
+                plan_ulohy[kluc]["hotovo"] += int(o.get('Zabalené (ks)', 0))
+            if zostava_zak.get(vybrany_zak, 0) == 0:
+                st.success(f"✅ {vybrany_zak} je kompletne nabalený – môžeš ho expedovať.")
+
+        def pridaj_sacky(k, g, pridavam, prednost=None):
+            """Zapíše presne `pridavam` sáčkov. Najprv pokryje objednávky zákazníka `prednost`,
+            potom ostatných. Vráti počet kusov navyše nad otvorené objednávky."""
             sklad_pred = copy.deepcopy(st.session_state.sklad)
             zvysok = pridavam
-            for idx_o, obj in enumerate(st.session_state.aktualne_objednavky):
+            objednavky = st.session_state.aktualne_objednavky
+            poradie = sorted(range(len(objednavky)), key=lambda i: 0 if (prednost and objednavky[i].get('Odberateľ') == prednost) else 1)
+            for idx_o in poradie:
+                obj = objednavky[idx_o]
                 if zvysok <= 0: break
                 if obj.get('❌ Zmazať') or obj.get('Sudy') or obj.get('Potvrdene'): continue
                 if obj['Káva'] == k and obj['Gramáž'] == g:
@@ -979,14 +1017,14 @@ with tab3:
                     zrno_sku = SKU_UPRAZENA.get(zrno)
                     if zrno_sku: st.session_state.sklad["uprazena"][zrno_sku] -= (vaha_do_sackov * podiel)
 
-            detail = f"{k} {g}g: +{pridavam} ks ({pc_sku})" + (f", z toho {zvysok} ks navyše" if zvysok > 0 else "")
+            detail = f"{k} {g}g: +{pridavam} ks ({pc_sku})" + (f" pre {prednost}" if prednost else "") + (f", z toho {zvysok} ks navyše" if zvysok > 0 else "")
             auto_uloz(akcia="Balenie", detail=detail, sklad_pred=sklad_pred)
             return zvysok
 
-        kavy_na_balenie = sorted(list(set([v['kava'] for v in plan_balenia.values()])))
+        kavy_na_balenie = sorted(list(set([v['kava'] for v in plan_ulohy.values()])))
         
         for kava in kavy_na_balenie:
-            polozky_pre_kavu = [v for v in plan_balenia.values() if v['kava'] == kava]
+            polozky_pre_kavu = [v for v in plan_ulohy.values() if v['kava'] == kava]
             vaha_potrebna_chýba = sum([max(0, v['ciel'] - v['hotovo']) * v['gramaz'] / 1000.0 for v in polozky_pre_kavu])
             je_vsetko_kava_hotovo = vaha_potrebna_chýba <= 0
             
@@ -1022,7 +1060,7 @@ with tab3:
                                 if je_duplicitny_klik(f"bag_{p['kava']}_{p['gramaz']}", int(pocet_ks)):
                                     st.warning("Dvojklik zachytený – započítané len raz.")
                                 else:
-                                    navyse = pridaj_sacky(p['kava'], p['gramaz'], int(pocet_ks))
+                                    navyse = pridaj_sacky(p['kava'], p['gramaz'], int(pocet_ks), prednost=prednost)
                                     if navyse > 0:
                                         st.session_state.msg_balenie = f"{navyse} ks navyše nad objednávky išlo do regálu ako voľný sklad."
                                     st.rerun()
