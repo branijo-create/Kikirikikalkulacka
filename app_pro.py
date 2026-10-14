@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import math
 import io
+import os
 from datetime import datetime, timedelta
 import json
 
@@ -9,7 +10,7 @@ import json
 st.set_page_config(page_title="Kikiriki Roastery PRO", page_icon="☕", layout="wide")
 
 # ==========================================
-# 🎨 FIREMNÝ DIZAJN (BARLOW, NEKOMPROMISNÝ BOLD PRE TABS & LOGO)
+# 🎨 FIREMNÝ DIZAJN (PRESNÉ ZACIELENIE NA STREAMLIT TABS)
 # ==========================================
 firemny_dizajn = """
 <style>
@@ -35,35 +36,34 @@ firemny_dizajn = """
         font-size: 2.2rem !important;
     }
 
-    /* VŠETKY ZÁLOŽKY - AKTÍVNE AJ NEAKTÍVNE (MASÍVNY BOLD A VEĽKOSŤ) */
-    div[data-testid="stTabs"] button[role="tab"] {
+    /* PRESNÉ ZACIELENIE NA TEXT V ZÁLOŽKÁCH STREAMLITU */
+    button[data-baseweb="tab"] {
         height: 52px !important;
         padding: 0px 24px !important;
-        border-radius: 6px 6px 0px 0px !important;
-        border: 1px solid #D1C5B4 !important;
-        border-bottom: none !important;
-        background-color: #EDE3D1 !important;
     }
 
-    div[data-testid="stTabs"] button[role="tab"] * {
+    /* VŠETKY NÁZVY ZÁLOŽIEK: VÄČŠIE A VÝRAZNE TUČNÉ (BOLD) */
+    button[data-baseweb="tab"] div[data-testid="stMarkdownContainer"] p {
         font-family: 'Barlow Condensed', sans-serif !important;
         font-size: 1.35rem !important;
         font-weight: 800 !important;
-        letter-spacing: 1px !important;
+        letter-spacing: 0.8px !important;
         text-transform: uppercase !important;
         color: #2B5098 !important;
     }
 
-    /* AKTÍVNA ZÁLOŽKA */
-    div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
-        background-color: #2B5098 !important;
-        border-color: #2B5098 !important;
+    /* AKTÍVNA (PREPNUTÁ) ZÁLOŽKA */
+    button[data-baseweb="tab"][aria-selected="true"] {
+        border-bottom-color: #2B5098 !important;
+        border-bottom-width: 3px !important;
     }
 
-    div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] * {
-        color: #FFFFFF !important;
+    button[data-baseweb="tab"][aria-selected="true"] div[data-testid="stMarkdownContainer"] p {
+        color: #2B5098 !important;
+        font-weight: 900 !important;
     }
 
+    /* Vylepšenie tlačidiel a tabuliek */
     .stDataFrame, th, td, .stButton>button {
         font-weight: 600 !important;
     }
@@ -186,27 +186,31 @@ if 'nazov_prazenia' not in st.session_state:
 if 'form_key' not in st.session_state: st.session_state.form_key = 0
 def vynuluj_policka(): st.session_state.form_key += 1
 
-# --- HLAVNÉ ROZHRANIE S REÁLNYM KOHÚTOM V LOGU ---
+# --- HLAVIČKA A LOGO ---
 col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 6.9 | Výrobný manažment")
+    st.caption("Verzia 7.0 | Výrobný manažment")
 
 with col_head_right:
-    # Presná silueta kohúta KIKIRIKI
-    logo_kohut_html = """
-    <div style="display: flex; flex-direction: column; align-items: flex-end; justify-content: center; padding-top: 5px;">
-        <svg width="44" height="44" viewBox="0 0 100 100" fill="#2B5098" xmlns="http://www.w3.org/2000/svg">
-            <!-- Hlava a hrebeň kohúta -->
-            <path d="M50 10 C38 10 32 18 30 25 C26 23 20 25 20 31 C20 34 22 37 25 39 C22 43 23 49 28 52 C29 55 32 58 36 60 C37 66 41 73 47 77 C44 80 40 82 35 83 L35 88 C45 88 53 83 58 77 C66 75 73 68 76 60 C79 50 78 38 72 28 C67 18 59 10 50 10 Z M63 42 C60.8 42 59 40.2 59 38 C59 35.8 60.8 34 63 34 C65.2 34 67 35.8 67 38 C67 40.2 65.2 42 63 42 Z M78 45 L88 47 L78 52 Z"/>
-            <!-- Lalok -->
-            <path d="M68 53 C70 58 68 64 63 66 C59 67 56 63 57 58 C61 58 65 56 68 53 Z"/>
-        </svg>
-        <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 900; color: #2B5098; font-size: 1.35rem; letter-spacing: 2px; text-transform: uppercase;">KIKIRIKI</span>
-    </div>
-    """
-    st.markdown(logo_kohut_html, unsafe_allow_html=True)
+    # Ak je v repozitári nahraté originálne logo logo.png (alebo logo.svg), zobrazí sa priamo
+    if os.path.exists("logo.png"):
+        st.image("logo.png", width=110)
+    elif os.path.exists("logo.svg"):
+        st.image("logo.svg", width=110)
+    else:
+        # Čisté textové logo bez umelých deformácií
+        st.markdown(
+            """
+            <div style="text-align: right; padding-top: 10px;">
+                <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 900; color: #2B5098; font-size: 1.8rem; letter-spacing: 2px;">
+                    KIKIRIKI
+                </span>
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
 
 st.text_input("Identifikátor praženia:", key="nazov_prazenia", on_change=auto_uloz)
 
