@@ -6,7 +6,38 @@ from datetime import datetime, timedelta
 import json
 
 # --- NASTAVENIE STRÁNKY ---
-st.set_page_config(page_title="Roastery PRO v5.3", page_icon="☕", layout="wide")
+st.set_page_config(page_title="Roastery Manager PRO v5.4", page_icon="☕", layout="wide")
+
+# ==========================================
+# 🎨 FIREMNÝ DIZAJN (BARLOW & FARBY)
+# ==========================================
+firemny_dizajn = """
+<style>
+    /* Natiahnutie fontov Barlow a Barlow Condensed z Google Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap');
+
+    /* Aplikovanie klasického Barlow na celý bežný text */
+    html, body, [class*="css"] {
+        font-family: 'Barlow', sans-serif !important;
+    }
+
+    /* Aplikovanie Barlow Condensed vo firemnej modrej na všetky nadpisy */
+    h1, h2, h3 {
+        font-family: 'Barlow Condensed', sans-serif !important;
+        color: #2B5098 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    /* Zvýraznenie metrík (veľké čísla v dózach) firemnou modrou */
+    [data-testid="stMetricValue"] {
+        font-family: 'Barlow Condensed', sans-serif !important;
+        color: #2B5098 !important;
+    }
+</style>
+"""
+st.markdown(firemny_dizajn, unsafe_allow_html=True)
+# ==========================================
 
 # --- KONFIGURÁCIA ---
 KAPACITA_ZELENA_BATCH = 5.0
@@ -125,7 +156,7 @@ def vynuluj_policka(): st.session_state.form_key += 1
 
 # --- HLAVNÉ ROZHRANIE ---
 st.title("🏭 Kikiriki Roastery PRO")
-st.caption("Verzia 5.3 | Zóna presnej produkcie")
+st.caption("Verzia 5.4 | Zóna presnej produkcie")
 
 st.text_input("📅 Identifikátor praženia:", key="nazov_prazenia", on_change=auto_uloz)
 
@@ -362,165 +393,4 @@ with tab1:
                         max_row, max_col = df.shape
                         if max_row == 0: return
 
-                        worksheet.autofilter(0, 0, max_row, max_col - 1)
-                        header_format = workbook.add_format({'bold': True, 'bg_color': '#6b4c3a', 'font_color': 'white', 'border': 1})
-                        for col_num, value in enumerate(df.columns):
-                            worksheet.write(0, col_num, str(value), header_format)
-                            max_len = max(df[df.columns[col_num]].astype(str).map(len).max(), len(str(value))) + 2
-                            worksheet.set_column(col_num, col_num, max_len)
-                            
-                        format_z1 = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1})
-                        format_z2 = workbook.add_format({'bg_color': '#F9F9F9', 'border': 1}) 
-                        format_total = workbook.add_format({'bold': True, 'bg_color': '#EAEAEA', 'border': 1}) 
-                        
-                        for r_idx in range(max_row):
-                            is_total = str(df.iloc[r_idx, 0]).startswith('SPOLU')
-                            fmt = format_total if is_total else (format_z1 if r_idx % 2 == 0 else format_z2)
-                            for c_idx in range(max_col):
-                                cell_val = df.iloc[r_idx, c_idx]
-                                if pd.isna(cell_val): worksheet.write(r_idx + 1, c_idx, "", fmt)
-                                else:
-                                    if isinstance(cell_val, (int, float)): worksheet.write_number(r_idx + 1, c_idx, cell_val, fmt)
-                                    else: worksheet.write(r_idx + 1, c_idx, str(cell_val), fmt)
-
-                    write_styled_sheet(df_plan_excel, 'Plan_Prazenia')
-                    write_styled_sheet(df_objednavky_export.drop(columns=['❌ Zmazať'], errors='ignore'), 'Spracovane_Objednavky')
-                    if not df_blendov.empty: write_styled_sheet(df_blendov, 'Plan_Blendov', group_by_col='Názov blendu')
-                    write_styled_sheet(sum_pivot_ex, 'Sumar_Obalov')
-
-                st.download_button(
-                    label="💾 Stiahnuť Kikiriki Excel (.xlsx)", data=buffer.getvalue(), file_name=f"Kikiriki_PRO_{st.session_state.nazov_prazenia}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary", use_container_width=True
-                )
-
-# ========================================================
-# TAB 2: PRAŽIAREŇ (Výroba)
-# ========================================================
-with tab2:
-    st.markdown("### 🔥 Panel pri stroji")
-    st.caption("Pohodlné odklikávanie reálneho praženia s automatickým prenosom do Dóz.")
-    
-    aktivne_objednavky = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True]
-    potreba_zelenej_podla_zrna = {}
-    potreba_uprazenej_podla_zrna = {}
-    
-    for o in aktivne_objednavky:
-        je_sud = o.get("Sudy") == True
-        if je_sud:
-            zelena_kg_zaklad = o["Kusy"] * KAPACITA_ZELENA_BATCH
-            uprazena_kg = zelena_kg_zaklad * (1 - (STANDARDNY_VYPEK / 100.0))
-        else:
-            uprazena_kg = (o["Kusy"] * o["Gramáž"] / 1000.0)
-            zelena_kg_zaklad = uprazena_kg / (1 - (STANDARDNY_VYPEK / 100.0))
-        
-        if o["Káva"] in kavy_recepty:
-            recept = kavy_recepty[o["Káva"]]["recept"]
-            for zrno, podiel in recept.items():
-                potreba_zelenej_podla_zrna[zrno] = potreba_zelenej_podla_zrna.get(zrno, 0) + (zelena_kg_zaklad * podiel)
-                potreba_uprazenej_podla_zrna[zrno] = potreba_uprazenej_podla_zrna.get(zrno, 0) + (uprazena_kg * podiel)
-
-    if not potreba_zelenej_podla_zrna:
-        st.info("Plán praženia je prázdny. Začni pridaním objednávok v Kancelárii.")
-    else:
-        for zrno, teoreticka_vaha_zelena in potreba_zelenej_podla_zrna.items():
-            davky_plan = math.ceil(teoreticka_vaha_zelena / KAPACITA_ZELENA_BATCH)
-            zelena_plan = davky_plan * KAPACITA_ZELENA_BATCH
-            uprazena_teoria = zelena_plan * (1 - (STANDARDNY_VYPEK / 100.0))
-            
-            stav = st.session_state.priebeh_prazenia.get(zrno, {"hotovo": False, "zelena_real": 0.0, "uprazena_real": 0.0})
-            
-            with st.expander(f"{'✅ Hotovo' if stav['hotovo'] else '⏳ Na rade:'} {zrno} ({davky_plan} batchov)", expanded=not stav['hotovo']):
-                col_info, col_input = st.columns([1, 1])
-                
-                with col_info:
-                    st.write(f"**Navážiť zelenú:** {zelena_plan:.1f} kg")
-                    st.write(f"**Cieľ:** {uprazena_teoria:.2f} kg do dózy")
-                
-                with col_input:
-                    if not stav['hotovo']:
-                        manual_mode = st.checkbox("Zadať odchýlku manuálne", key=f"manual_{zrno}")
-                        if not manual_mode:
-                            if st.button(f"Odpražiť {davky_plan} dávok", key=f"auto_{zrno}", type="primary"):
-                                st.session_state.priebeh_prazenia[zrno] = {"zelena_real": zelena_plan, "uprazena_real": uprazena_teoria, "hotovo": True}
-                                auto_uloz()
-                                st.rerun()
-                        else:
-                            def update_priebeh(z=zrno):
-                                st.session_state.priebeh_prazenia[z] = {"zelena_real": st.session_state[f"z_real_{z}"], "uprazena_real": st.session_state[f"u_real_{z}"], "hotovo": st.session_state[f"hotovo_{z}"]}
-                                auto_uloz()
-                            st.number_input("Zelená (kg):", value=float(stav["zelena_real"] or zelena_plan), step=0.1, key=f"z_real_{zrno}", on_change=update_priebeh)
-                            st.number_input("Upražená (kg):", value=float(stav["uprazena_real"]), step=0.1, key=f"u_real_{zrno}", on_change=update_priebeh)
-                            st.checkbox("Uložiť a presunúť do Dózy", value=stav["hotovo"], key=f"hotovo_{zrno}", on_change=update_priebeh)
-                    else:
-                        st.success(f"Dóza naplnená: {stav['uprazena_real']} kg")
-                        if st.button("Vrátiť späť (Zrušiť)", key=f"undo_{zrno}", type="secondary"):
-                            st.session_state.priebeh_prazenia[zrno]["hotovo"] = False
-                            auto_uloz()
-                            st.rerun()
-
-# ========================================================
-# TAB 3: BALIAREŇ A DÓZY
-# ========================================================
-with tab3:
-    st.markdown("### 📦 Zostatky v Dózach")
-    
-    stav_doz = {}
-    for zrno, data in st.session_state.priebeh_prazenia.items():
-        if data["hotovo"]:
-            stav_doz[zrno] = stav_doz.get(zrno, 0.0) + data["uprazena_real"]
-            
-    aktivne_objednavky = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True]
-    for o in aktivne_objednavky:
-        if o.get("Potvrdene") == True and o.get("Sudy") != True:
-            zabalena_vaha_kg = o["Zabalené (ks)"] * o["Gramáž"] / 1000.0
-            if o["Káva"] in kavy_recepty:
-                recept = kavy_recepty[o["Káva"]]["recept"]
-                for zrno, podiel in recept.items():
-                    if zrno in stav_doz:
-                        stav_doz[zrno] -= (zabalena_vaha_kg * podiel)
-
-    if not stav_doz:
-        st.info("Dózy sú prázdne.")
-    else:
-        dozy_cols = st.columns(len(stav_doz))
-        for idx, (zrno, vaha) in enumerate(stav_doz.items()):
-            with dozy_cols[idx % len(dozy_cols)]:
-                farba = "green" if vaha >= 0 else "red"
-                st.metric(label=zrno, value=f"{vaha:.2f} kg", delta="Zostatok" if vaha >= 0 else "Chýba do sáčkov", delta_color="normal" if vaha>=0 else "inverse")
-
-    st.divider()
-    
-    st.markdown("### 🏷️ Priebeh balenia")
-    
-    def zmena_balenia_pro_callback(index_v_liste):
-        st.session_state.aktualne_objednavky[index_v_liste]['Zabalené (ks)'] = st.session_state[f"pro_pocet_{index_v_liste}"]
-        st.session_state.aktualne_objednavky[index_v_liste]['Potvrdene'] = st.session_state[f"pro_chk_{index_v_liste}"]
-        auto_uloz() 
-
-    for i, obj in enumerate(st.session_state.aktualne_objednavky):
-        if obj.get('❌ Zmazať') == True or obj.get('Sudy') == True: continue
-            
-        with st.container():
-            aktualne_zabalene = int(obj.get('Zabalené (ks)', obj['Kusy']))
-            objednane = int(obj['Kusy'])
-            potvrdene = obj.get('Potvrdene') == True
-            
-            col_text, col_cisla, col_chk = st.columns([4, 1, 1])
-            with col_text:
-                if potvrdene and aktualne_zabalene == objednane:
-                    st.markdown(f"✅ **{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g) - {objednane} ks")
-                else:
-                    st.markdown(f"📦 **{obj['Odberateľ']}** | {obj['Káva']} ({obj['Gramáž']}g) - Objednané: {objednane} ks")
-            
-            with col_cisla:
-                st.number_input("Zabalené:", min_value=0, value=aktualne_zabalene, step=1, key=f"pro_pocet_{i}", on_change=zmena_balenia_pro_callback, args=(i,), label_visibility="collapsed")
-            with col_chk:
-                st.checkbox("Hotovo", value=potvrdene, key=f"pro_chk_{i}", on_change=zmena_balenia_pro_callback, args=(i,))
-        st.markdown("---")
-
-# ========================================================
-# TAB 4: ÚČTOVNÍCTVO
-# ========================================================
-with tab4:
-    st.markdown("### 📊 Generovanie exportov pre KROS Omega")
-    st.info("Pripravuje sa...")
+                        worksheet.autofilter(0, 0, max_row, max_
