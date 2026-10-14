@@ -70,7 +70,7 @@ st.markdown(firemny_dizajn, unsafe_allow_html=True)
 KAPACITA_ZELENA_BATCH = 5.0
 STANDARDNY_VYPEK = 20
 DNESNY_DATUM = datetime.now().strftime("%d-%m-%Y")
-NAZOV_TABULKY_ZALOHA = "Kikiriki_Zaloha_PRO"
+NAZOV_TABULKY_ZALOHA = "Kikiriki_DB_2026"
 
 kavy_recepty = {
     "Brazília": {"vypek": STANDARDNY_VYPEK, "recept": {"Brazília Santos": 1.0}},
@@ -188,7 +188,6 @@ def vycisti_disk_robota():
         subory = client.list_spreadsheet_files()
         zmazane = 0
         for f in subory:
-            # Zmaže všetky staré testovacie súbory, aby uvoľnil 15GB limit
             client.del_spreadsheet(f['id'])
             zmazane += 1
         return True, zmazane
@@ -221,7 +220,7 @@ col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 7.5 | Výrobný manažment")
+    st.caption("Verzia 7.6 | Výrobný manažment")
 
 with col_head_right:
     if os.path.exists("logo.png"):
@@ -518,21 +517,19 @@ with tab1:
                 )
 
 # ========================================================
-# TAB 2: PRAŽIAREŇ
+# TAB 2: PRAŽIAREŇ (Nový systém dávok)
 # ========================================================
 with tab2:
     st.markdown("### Panel pri stroji")
-    st.caption("Pohodlné odklikávanie reálneho praženia s automatickým prenosom do Skladu (Dóz).")
+    st.caption("Postupné odklikávanie reálneho praženia s automatickým prenosom do Skladu (Dóz).")
     
     aktivne_objednavky = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True]
     potreba_zelenej_podla_zrna = {}
-    potreba_uprazenej_podla_zrna = {}
     
     for o in aktivne_objednavky:
         je_sud = o.get("Sudy") == True
         if je_sud:
             zelena_kg_zaklad = o["Kusy"] * KAPACITA_ZELENA_BATCH
-            uprazena_kg = zelena_kg_zaklad * (1 - (STANDARDNY_VYPEK / 100.0))
         else:
             uprazena_kg = (o["Kusy"] * o["Gramáž"] / 1000.0)
             zelena_kg_zaklad = uprazena_kg / (1 - (STANDARDNY_VYPEK / 100.0))
@@ -541,47 +538,89 @@ with tab2:
             recept = kavy_recepty[o["Káva"]]["recept"]
             for zrno, podiel in recept.items():
                 potreba_zelenej_podla_zrna[zrno] = potreba_zelenej_podla_zrna.get(zrno, 0) + (zelena_kg_zaklad * podiel)
-                potreba_uprazenej_podla_zrna[zrno] = potreba_uprazenej_podla_zrna.get(zrno, 0) + (uprazena_kg * podiel)
 
     if not potreba_zelenej_podla_zrna:
         st.info("Plán praženia je prázdny. Začni pridaním objednávok v Objednávkach.")
     else:
         for zrno, teoreticka_vaha_zelena in potreba_zelenej_podla_zrna.items():
             davky_plan = math.ceil(teoreticka_vaha_zelena / KAPACITA_ZELENA_BATCH)
-            zelena_plan = davky_plan * KAPACITA_ZELENA_BATCH
-            uprazena_teoria = zelena_plan * (1 - (STANDARDNY_VYPEK / 100.0))
             
-            stav = st.session_state.priebeh_prazenia.get(zrno, {"hotovo": False, "zelena_real": 0.0, "uprazena_real": 0.0})
+            # Načítanie stavu z cloudu (s prechodom na nový systém "davky_hotovo")
+            stav_z_cloudu = st.session_state.priebeh_prazenia.get(zrno, {})
+            if "davky_hotovo" not in stav_z_cloudu:
+                if stav_z_cloudu.get("hotovo") == True:
+                    davky_hotovo = davky_plan
+                else:
+                    davky_hotovo = 0
+            else:
+                davky_hotovo = stav_z_cloudu["davky_hotovo"]
+                
+            zelena_real = stav_z_cloudu.get("zelena_real", davky_hotovo * KAPACITA_ZELENA_BATCH)
+            uprazena_real = stav_z_cloudu.get("uprazena_real", zelena_real * (1 - (STANDARDNY_VYPEK / 100.0)))
             
-            stav_text = "✅ Hotovo" if stav['hotovo'] else "⏳ Na rade:"
-            expander_title = f"{stav_text} **{zrno}** ({davky_plan} batchov)"
+            je_hotovo = davky_hotovo >= davky_plan
             
-            with st.expander(expander_title, expanded=not stav['hotovo']):
+            stav_text = "✅ Hotovo" if je_hotovo else "⏳ Na rade:"
+            if davky_hotovo > 0 and not je_hotovo:
+                stav_text = "🔄 Rozpracované:"
+                
+            expander_title = f"{stav_text} **{zrno}** (Upražené {davky_hotovo} z {davky_plan} dávok)"
+            
+            with st.expander(expander_title, expanded=not je_hotovo):
                 col_info, col_input = st.columns([1, 1])
                 
                 with col_info:
-                    st.write(f"**Navážiť zelenú:** {zelena_plan:.1f} kg")
-                    st.write(f"**Cieľ:** {uprazena_teoria:.2f} kg do skladu")
+                    st.markdown(f"**Plán z objednávok:** {davky_plan} dávok ({davky_plan * KAPACITA_ZELENA_BATCH:.1f} kg zelenej)")
+                    if davky_hotovo > 0:
+                        st.success(f"**Už upražené a presunuté do skladu:** {davky_hotovo} dávok ({uprazena_real:.2f} kg)")
                 
                 with col_input:
-                    if not stav['hotovo']:
-                        manual_mode = st.checkbox("Zadať odchýlku manuálne", key=f"manual_{zrno}")
-                        if not manual_mode:
-                            if st.button(f"Odpražiť {davky_plan} dávok", key=f"auto_{zrno}", type="primary"):
-                                st.session_state.priebeh_prazenia[zrno] = {"zelena_real": zelena_plan, "uprazena_real": uprazena_teoria, "hotovo": True}
-                                auto_uloz()
-                                st.rerun()
-                        else:
-                            def update_priebeh(z=zrno):
-                                st.session_state.priebeh_prazenia[z] = {"zelena_real": st.session_state[f"z_real_{z}"], "uprazena_real": st.session_state[f"u_real_{z}"], "hotovo": st.session_state[f"hotovo_{z}"]}
-                                auto_uloz()
-                            st.number_input("Zelená (kg):", value=float(stav["zelena_real"] or zelena_plan), step=0.1, key=f"z_real_{zrno}", on_change=update_priebeh)
-                            st.number_input("Upražená (kg):", value=float(stav["uprazena_real"]), step=0.1, key=f"u_real_{zrno}", on_change=update_priebeh)
-                            st.checkbox("Uložiť a presunúť do Skladu", value=stav["hotovo"], key=f"hotovo_{zrno}", on_change=update_priebeh)
+                    davky_zvysne = davky_plan - davky_hotovo
+                    
+                    if davky_zvysne > 0:
+                        st.markdown("**Zapísať ďalšie praženie:**")
+                        aktualne_na_prazenie = st.number_input(
+                            "Počet dávok (tu môžeš pridať aj ubrať):", 
+                            min_value=1, 
+                            value=davky_zvysne, 
+                            step=1, 
+                            key=f"davky_{zrno}"
+                        )
+                        
+                        if st.button(f"Odpražiť a pridať {aktualne_na_prazenie} dávok", key=f"btn_praz_{zrno}", type="primary"):
+                            nova_zelena = aktualne_na_prazenie * KAPACITA_ZELENA_BATCH
+                            nova_uprazena = nova_zelena * (1 - (STANDARDNY_VYPEK / 100.0))
+                            
+                            st.session_state.priebeh_prazenia[zrno] = {
+                                "davky_hotovo": davky_hotovo + aktualne_na_prazenie,
+                                "zelena_real": zelena_real + nova_zelena,
+                                "uprazena_real": uprazena_real + nova_uprazena,
+                                "hotovo": (davky_hotovo + aktualne_na_prazenie) >= davky_plan
+                            }
+                            auto_uloz()
+                            st.rerun()
                     else:
-                        st.success(f"Sklad doplnený: {stav['uprazena_real']} kg")
-                        if st.button("Vrátiť späť (Zrušiť)", key=f"undo_{zrno}", type="secondary"):
-                            st.session_state.priebeh_prazenia[zrno]["hotovo"] = False
+                        st.info("Plán pre túto kávu je už splnený.")
+                        extra_davky = st.number_input("Chceš upražiť niečo extra naviac?", min_value=1, value=1, step=1, key=f"extra_{zrno}")
+                        if st.button(f"Odpražiť extra {extra_davky} dávok", key=f"btn_extra_{zrno}"):
+                            nova_zelena = extra_davky * KAPACITA_ZELENA_BATCH
+                            nova_uprazena = nova_zelena * (1 - (STANDARDNY_VYPEK / 100.0))
+                            
+                            st.session_state.priebeh_prazenia[zrno] = {
+                                "davky_hotovo": davky_hotovo + extra_davky,
+                                "zelena_real": zelena_real + nova_zelena,
+                                "uprazena_real": uprazena_real + nova_uprazena,
+                                "hotovo": True
+                            }
+                            auto_uloz()
+                            st.rerun()
+                    
+                    if davky_hotovo > 0:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        if st.button("Vrátiť späť (Resetovať všetky dávky)", key=f"undo_{zrno}", type="secondary"):
+                            st.session_state.priebeh_prazenia[zrno] = {
+                                "davky_hotovo": 0, "zelena_real": 0.0, "uprazena_real": 0.0, "hotovo": False
+                            }
                             auto_uloz()
                             st.rerun()
 
@@ -624,7 +663,7 @@ with tab3:
             st.markdown("---")
 
 # ========================================================
-# TAB 4: SKLAD
+# TAB 4: SKLAD (Nové čítanie čiastkových dávok)
 # ========================================================
 with tab4:
     st.markdown("### Aktuálny stav skladu (Dózy)")
@@ -632,8 +671,9 @@ with tab4:
     
     stav_doz = {}
     for zrno, data in st.session_state.priebeh_prazenia.items():
-        if data["hotovo"]:
-            stav_doz[zrno] = stav_doz.get(zrno, 0.0) + data["uprazena_real"]
+        # Pripočíta do skladu aj keď nie je upečené všetko, ale aspoň nejaké dávky už sú
+        if data.get("davky_hotovo", 0) > 0 or data.get("hotovo"):
+            stav_doz[zrno] = stav_doz.get(zrno, 0.0) + data.get("uprazena_real", 0.0)
             
     aktivne_objednavky = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True]
     for o in aktivne_objednavky:
