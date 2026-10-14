@@ -62,6 +62,16 @@ firemny_dizajn = """
     .stDataFrame, th, td {
         font-weight: 600 !important;
     }
+    
+    /* VÝRAZNÉ ZVÄČŠENIE NÁZVOV KÁVY V PRAŽIARNI */
+    div[data-testid="stExpander"] summary p {
+        font-size: 1.15rem !important;
+    }
+    div[data-testid="stExpander"] summary p strong {
+        font-size: 1.65rem !important; /* O číslo väčšie */
+        color: #1A3568 !important;     /* Tmavšia modrá pre lepší kontrast */
+        letter-spacing: 0.5px !important;
+    }
 </style>
 """
 st.markdown(firemny_dizajn, unsafe_allow_html=True)
@@ -70,6 +80,7 @@ st.markdown(firemny_dizajn, unsafe_allow_html=True)
 KAPACITA_ZELENA_BATCH = 5.0
 STANDARDNY_VYPEK = 20
 DNESNY_DATUM = datetime.now().strftime("%d-%m-%Y")
+
 NAZOV_TABULKY_ZALOHA = "Kikiriki_Zaloha_PRO"
 
 kavy_recepty = {
@@ -220,7 +231,7 @@ col_head_left, col_head_right = st.columns([3, 1])
 
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 7.8 | Výrobný manažment")
+    st.caption("Verzia 7.9 | Výrobný manažment")
 
 with col_head_right:
     if os.path.exists("logo.png"):
@@ -517,7 +528,7 @@ with tab1:
                 )
 
 # ========================================================
-# TAB 2: PRAŽIAREŇ (Nový systém fixného plánu a čiastkových dávok)
+# TAB 2: PRAŽIAREŇ
 # ========================================================
 with tab2:
     st.markdown("### Panel pri stroji")
@@ -543,13 +554,10 @@ with tab2:
         st.info("Plán praženia je prázdny. Začni pridaním objednávok v Objednávkach.")
     else:
         for zrno, teoreticka_vaha_zelena in potreba_zelenej_podla_zrna.items():
-            # Toto je svätý cieľ vypočítaný z objednávok
             davky_plan = math.ceil(teoreticka_vaha_zelena / KAPACITA_ZELENA_BATCH)
             
-            # Načítanie stavu z cloudu (koľko už chalan reálne spravil)
             stav_z_cloudu = st.session_state.priebeh_prazenia.get(zrno, {"davky_hotovo": 0, "zelena_real": 0.0, "uprazena_real": 0.0, "hotovo": False})
             
-            # Ošetrenie pre staršie zálohy, kde ešte nebola premenná davky_hotovo
             if "davky_hotovo" not in stav_z_cloudu:
                 if stav_z_cloudu.get("hotovo") == True:
                     davky_hotovo = davky_plan
@@ -560,8 +568,18 @@ with tab2:
                 
             davky_zostava = max(0, davky_plan - davky_hotovo)
             je_hotovo = davky_hotovo >= davky_plan
+            ma_navyse = davky_hotovo > davky_plan
             
-            stav_text = "✅ Hotovo" if je_hotovo else ("🔄 Rozpracované" if davky_hotovo > 0 else "⏳ Na rade")
+            # NOVÁ LOGIKA PRE IKONKY STAVU
+            if ma_navyse:
+                stav_text = "✅ ⬆️ Hotovo (Navyše)"
+            elif je_hotovo:
+                stav_text = "✅ Hotovo"
+            elif davky_hotovo > 0:
+                stav_text = "🔄 Rozpracované"
+            else:
+                stav_text = "⏳ Na rade"
+                
             expander_title = f"{stav_text}: **{zrno}** ({davky_hotovo} / {davky_plan} dávok)"
             
             with st.expander(expander_title, expanded=not je_hotovo):
@@ -573,13 +591,14 @@ with tab2:
                     
                     if davky_zostava > 0:
                         st.warning(f"**Zostáva dokončiť:** {davky_zostava} dávok")
+                    elif ma_navyse:
+                        st.info(f"**Odpražené o {davky_hotovo - davky_plan} dávok navyše.**")
                     else:
-                        st.success(f"**Plán je splnený!**")
+                        st.success(f"**Plán je presne splnený!**")
                 
                 with col_input:
                     st.markdown("**Zapísať reálne odpražené dávky:**")
                     
-                    # Predvolená hodnota je toľko, koľko mu chýba do konca (alebo 1 ak robí niečo navyše)
                     default_pridat = davky_zostava if davky_zostava > 0 else 1
                     
                     pridat_davky = st.number_input(
