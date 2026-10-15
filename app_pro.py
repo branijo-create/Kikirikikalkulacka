@@ -971,7 +971,7 @@ def logo_html():
 col_head_left, col_head_lock, col_head_logo = st.columns([14, 1, 2], vertical_alignment="center")
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 11.4 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 11.5 | Výroba, Sklad & ERP Kódy")
 with col_head_lock:
     ikona = "🔓" if st.session_state.get("admin_odomknute", False) else "🔒"
     if st.button(ikona, key="btn_zamok", help="Inventúra, log a obnova"):
@@ -2511,6 +2511,7 @@ with tab6:
 # ========================================================
 AKCIA_START_STAT = "Štart štatistík"
 AKCIA_RUCNE_PRAZENIE = "Ručný záznam praženia"
+AKCIA_KOREKCIA_STAT = "Štatistika – korekcie"
 
 def statistiky_z_logu(df_log):
     """Z logu vytiahne pohyby: praženie (GC−, RC+), balenie (PC+), expedícia (PC−).
@@ -2534,9 +2535,16 @@ def statistiky_z_logu(df_log):
             continue
         cas_txt = f"{datum} 12:00:00"
         umele.append({"Čas": cas_txt, "Akcia": "Praženie (ručný záznam)", "Detail": f"{zrno}: {davky:g} dávok",
-                      "SKU": SKU_ZELENA.get(zrno, "GC?"), "Názov": zrno, "Zmena": str(-davky * KAPACITA_ZELENA_BATCH)})
+                      "SKU": SKU_ZELENA.get(zrno, "GC?"), "Názov": zrno, "Zmena": str(-davky * KAPACITA_ZELENA_BATCH), "_kcas": r_["Čas"]})
         umele.append({"Čas": cas_txt, "Akcia": "Praženie (ručný záznam)", "Detail": f"{zrno}: {davky:g} dávok",
-                      "SKU": SKU_UPRAZENA.get(zrno, "RC?"), "Názov": zrno, "Zmena": str(davky * UPRAZENA_NA_DAVKU)})
+                      "SKU": SKU_UPRAZENA.get(zrno, "RC?"), "Názov": zrno, "Zmena": str(davky * UPRAZENA_NA_DAVKU), "_kcas": r_["Čas"]})
+    # korekcie zo štatistiky (vylúčiť / zmeniť počet dávok) – posledná úprava platí
+    korekcie = {}
+    for _, r_ in df_log[df_log["Akcia"].astype(str) == AKCIA_KOREKCIA_STAT].sort_values("_cas").iterrows():
+        try: korekcie.update(json.loads(str(r_["Detail"])))
+        except Exception: pass
+    if "_kcas" not in df_log.columns: df_log["_kcas"] = df_log["Čas"]
+    df_log["_kcas"] = df_log["_kcas"].fillna(df_log["Čas"])
     if umele:
         df_log = pd.concat([df_log, pd.DataFrame(umele)], ignore_index=True)
     d = df_log[df_log["SKU"].astype(str).str.len() > 0].copy()
@@ -2555,6 +2563,20 @@ def statistiky_z_logu(df_log):
     d = d[d["druh"].notna()].copy()
     d["gramaz"] = d["SKU"].map(lambda x: gramaz_z_pc(x) if str(x).startswith("PC") else 0)
     d["nazov"] = [n if n else s_ for n, s_ in zip(d["Názov"].astype(str), d["SKU"])]
+    # kľúč praženia (spája GC− a RC+ riadok tej istej udalosti)
+    zrno_z_sku = {**{v: k for k, v in SKU_ZELENA.items()}, **{v: k for k, v in SKU_UPRAZENA.items()}}
+    d["kluc"] = [f"{kc}|{zrno_z_sku.get(sk_, n_)}" for kc, sk_, n_ in zip(d["_kcas"].astype(str), d["SKU"].astype(str), d["nazov"])]
+    d["vylucene"] = False
+    je_praz = d["druh"].isin(["zelena", "uprazena"])
+    for kl, k in korekcie.items():
+        m = je_praz & (d["kluc"] == kl)
+        if not m.any(): continue
+        if k.get("x"):
+            d.loc[m, "vylucene"] = True
+        elif k.get("d") is not None:
+            dv_ = float(k["d"])
+            d.loc[m & (d["druh"] == "zelena"), "zmena"] = -dv_ * KAPACITA_ZELENA_BATCH
+            d.loc[m & (d["druh"] == "uprazena"), "zmena"] = dv_ * UPRAZENA_NA_DAVKU
     d.attrs["start"] = start
     return d
 
@@ -2571,13 +2593,14 @@ with tab7:
     def nacitaj_stat():
         st.session_state.stat_df = statistiky_z_logu(nacitaj_log())
 
+    msg_st = st.session_state.pop("msg_stat", None)
+    if msg_st: st.success(msg_st)
+
     # --- Úprava štatistík (len odomknuté) ---
     with st.expander("⚙️ Úprava štatistík – štart odznova a ručné záznamy"):
         if not st.session_state.get("admin_odomknute", False):
             st.caption("🔒 Odomkni zámkom vpravo hore.")
         else:
-            msg_st = st.session_state.pop("msg_stat", None)
-            if msg_st: st.success(msg_st)
             st.markdown("**1) Začať štatistiky odznova** – všetko pred týmto okamihom (skúšky, zmazané pokusy) sa prestane počítať. "
                         "Log ani sklad sa nemažú.")
             potvrd_start = st.checkbox("Áno, chcem začať štatistiky od teraz.", key="stat_start_ok")
@@ -2602,7 +2625,10 @@ with tab7:
                 st.session_state.msg_stat = f"Zapísané: {rz_zrno} {int(rz_davky)} dávok ({rz_datum.strftime('%d.%m.%Y')})."
                 st.rerun()
 
-    d = st.session_state.get("stat_df")
+    d_vsetko = st.session_state.get("stat_df")
+    d = d_vsetko[~d_vsetko["vylucene"]] if (d_vsetko is not None and not d_vsetko.empty and "vylucene" in d_vsetko.columns) else d_vsetko
+    if d is not None:
+        d.attrs = dict(getattr(d_vsetko, "attrs", {}))
     if d is not None and d.attrs.get("start") is not None:
         st.caption(f"📍 Štatistiky sa počítajú od {d.attrs['start'].strftime('%d.%m.%Y %H:%M')} (+ ručné záznamy).")
     if d is not None and d.empty:
@@ -2651,14 +2677,41 @@ with tab7:
             c_a.dataframe(df_pz, use_container_width=True)
             c_b.bar_chart(df_pz["Dávky"], horizontal=True, height=max(220, 32 * len(df_pz)))
 
-        with st.expander(f"📋 Zoznam pražení ({obd}) – čo sa započítalo"):
-            zp = dv[dv["druh"] == "zelena"].copy()
+        with st.expander(f"📋 Zoznam pražení ({obd}) – čo sa započítalo · úprava a mazanie"):
+            zv = d_vsetko if obd == "Všetko" else d_vsetko[d_vsetko["mesiac"].map(lambda m: m.strftime("%m / %Y")) == obd]
+            zp = zv[zv["druh"] == "zelena"].copy()
             if zp.empty:
                 st.caption("Žiadne praženia.")
             else:
                 zp["Dávky"] = (-zp["zmena"] / KAPACITA_ZELENA_BATCH).round(2)
-                st.dataframe(zp.sort_values("cas", ascending=False)[["Čas", "nazov", "Dávky", "Akcia"]]
-                             .rename(columns={"nazov": "Zrno"}), hide_index=True, use_container_width=True)
+                zp["Nepočítať"] = zp["vylucene"]
+                tab_zp = zp.sort_values("cas", ascending=False)[["Čas", "nazov", "Dávky", "Nepočítať", "Akcia", "kluc"]].rename(columns={"nazov": "Zrno"})
+                if not st.session_state.get("admin_odomknute", False):
+                    st.dataframe(tab_zp.drop(columns=["kluc"]), hide_index=True, use_container_width=True)
+                    st.caption("🔒 Úpravu a mazanie odomkneš zámkom vpravo hore.")
+                else:
+                    st.caption("Uprav počet dávok alebo zaškrtni **Nepočítať** (skúšky, omyly) a daj Uložiť. Log ani sklad sa nemenia – mení sa len štatistika.")
+                    ed_zp = st.data_editor(tab_zp, hide_index=True, use_container_width=True, key=f"ed_zp_{obd}",
+                                           disabled=["Čas", "Zrno", "Akcia", "kluc"], column_config={
+                                               "kluc": None,
+                                               "Dávky": st.column_config.NumberColumn(min_value=0.0, step=1.0, format="%g"),
+                                               "Nepočítať": st.column_config.CheckboxColumn()})
+                    if st.button("💾 Uložiť úpravy štatistiky", key="btn_ulozit_zp", type="primary"):
+                        povodne = {r_["kluc"]: r_ for r_ in tab_zp.to_dict("records")}
+                        zmeny = {}
+                        for r_ in ed_zp.to_dict("records"):
+                            p_ = povodne.get(r_["kluc"])
+                            if p_ is None: continue
+                            if bool(r_["Nepočítať"]) != bool(p_["Nepočítať"]) or abs(float(r_["Dávky"] or 0) - float(p_["Dávky"])) > 1e-9:
+                                zmeny[r_["kluc"]] = {"x": True} if r_["Nepočítať"] else {"x": False, "d": float(r_["Dávky"] or 0)}
+                        if zmeny:
+                            polozky_z = list(zmeny.items())
+                            for i_z in range(0, len(polozky_z), 10):     # po 10 kusoch (detail v logu má limit dĺžky)
+                                auto_uloz(akcia=AKCIA_KOREKCIA_STAT, detail=json.dumps(dict(polozky_z[i_z:i_z + 10]), ensure_ascii=False))
+                            try: nacitaj_stat()
+                            except Exception: pass
+                            st.session_state.msg_stat = f"Štatistika upravená ({len(zmeny)} zmien)."
+                        st.rerun()
 
         st.markdown(f"#### 📦 Zabalené po výrobkoch ({obd})")
         if zab.empty:
