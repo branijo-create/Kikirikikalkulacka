@@ -474,6 +474,84 @@ def nacitaj_vsetko_z_cloudu_callback():
         st.session_state.msg_chyba = True
     st.session_state.pop("tabulka_objednavok", None)
 
+# --- KOMPLETNÁ ZÁLOHA DO EXCELU (všetky stavy: objednávky, praženie, sklad, expedícia) ---
+LIST_STAV_EXCEL = "_STAV"
+EXCEL_KUSOK = 30000  # bunka v Exceli unesie max. 32 767 znakov
+
+def vytvor_excel_stavu():
+    stav = {
+        "verzia": 1,
+        "vytvorene": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+        "nazov_prazenia": st.session_state.get("nazov_prazenia", ""),
+        "objednavky": st.session_state.aktualne_objednavky,
+        "prazenie": st.session_state.priebeh_prazenia,
+        "sklad": st.session_state.sklad,
+        "expedicia": st.session_state.get("expedicia_rozpracovane", {}),
+    }
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        wb = writer.book
+        hl = wb.add_format({"bold": True, "bg_color": "#2B5098", "font_color": "white", "border": 1})
+
+        def hárok(df, nazov):
+            if df.empty: df = pd.DataFrame({"Info": ["(prázdne)"]})
+            df.to_excel(writer, sheet_name=nazov, index=False)
+            ws = writer.sheets[nazov]
+            for c, col in enumerate(df.columns):
+                ws.write(0, c, str(col), hl)
+                ws.set_column(c, c, max(12, min(45, int(df[col].astype(str).map(len).max() if len(df) else 10) + 2)))
+            ws.freeze_panes(1, 0)
+
+        info = pd.DataFrame([
+            {"Položka": "Identifikátor praženia", "Hodnota": stav["nazov_prazenia"]},
+            {"Položka": "Záloha vytvorená", "Hodnota": stav["vytvorene"]},
+            {"Položka": "Počet riadkov objednávok", "Hodnota": len(stav["objednavky"])},
+            {"Položka": "Pozor", "Hodnota": "Na obnovu sa používa skrytý hárok _STAV. Úpravy v ostatných hárkoch sa pri načítaní neprenesú."},
+        ])
+        hárok(info, "Info")
+        hárok(pd.DataFrame(stav["objednavky"]).drop(columns=["❌ Zmazať"], errors="ignore"), "Objednávky")
+        hárok(pd.DataFrame([{"Zrno": z, "Dávky hotovo": v.get("davky_hotovo", 0), "Zelená (kg)": round(v.get("zelena_real", 0.0), 2),
+                             "Upražená (kg)": round(v.get("uprazena_real", 0.0), 2), "Hotovo": v.get("hotovo", False)}
+                            for z, v in stav["prazenie"].items()]), "Pražiareň")
+        hárok(pd.DataFrame([{"SKU": k, "Názov": NAZVY_ZELENA.get(k, ""), "Stav (kg)": round(float(v), 2)} for k, v in stav["sklad"]["zelena"].items()]), "Sklad GC")
+        hárok(pd.DataFrame([{"SKU": k, "Názov": NAZVY_UPRAZENA.get(k, ""), "Stav (kg)": round(float(v), 2)} for k, v in stav["sklad"]["uprazena"].items()]), "Sklad RC")
+        hárok(pd.DataFrame([{"SKU": k, "Názov": NAZVY_ZABALENA.get(k, ""), "Stav (ks)": int(v)} for k, v in stav["sklad"]["zabalena"].items()]), "Sklad Výrobky")
+        hárok(pd.DataFrame([{"Zákazník": z, "Krabica": i + 1, "SKU": s_, "Názov": NAZVY_ZABALENA.get(s_, s_), "Ks": n}
+                            for z, r in stav["expedicia"].items() for i, k in enumerate(r.get("krabice", [])) for s_, n in k.items()]), "Expedícia rozprac.")
+
+        text = json.dumps(stav, ensure_ascii=False)
+        ws_s = wb.add_worksheet(LIST_STAV_EXCEL)
+        ws_s.write(0, 0, "KIKIRIKI_STAV_V1")
+        for i in range(0, len(text), EXCEL_KUSOK):
+            ws_s.write_string(1 + i // EXCEL_KUSOK, 0, text[i:i + EXCEL_KUSOK])
+        ws_s.hide()
+    return buffer.getvalue()
+
+def nacitaj_stav_z_excelu_callback():
+    subor = st.session_state.get("upl_stav_excel")
+    if subor is None:
+        return
+    try:
+        df = pd.read_excel(io.BytesIO(subor.getvalue()), sheet_name=LIST_STAV_EXCEL, header=None, dtype=str)
+        if str(df.iloc[0, 0]) != "KIKIRIKI_STAV_V1":
+            raise ValueError("toto nie je záloha z Kikiriki PRO")
+        stav = json.loads("".join(str(x) for x in df.iloc[1:, 0].dropna()))
+    except Exception as e:
+        st.session_state.msg_excel_stav = ("error", f"Súbor sa nepodarilo načítať: {e}")
+        return
+    # aktuálny stav najprv do histórie, aby sa dalo vrátiť
+    auto_uloz(historia=True, akcia="Záloha pred načítaním Excelu", detail="Automatický snapshot")
+    sklad_pred = copy.deepcopy(st.session_state.sklad)
+    st.session_state.aktualne_objednavky = stav.get("objednavky", [])
+    st.session_state.priebeh_prazenia = stav.get("prazenie", {})
+    st.session_state.sklad = inicializuj_sklad(stav.get("sklad", {}))
+    st.session_state.expedicia_rozpracovane = stav.get("expedicia", {})
+    if stav.get("nazov_prazenia"):
+        st.session_state.nazov_prazenia = stav["nazov_prazenia"]
+    st.session_state.pop("tabulka_objednavok", None)
+    auto_uloz(akcia="Načítanie stavu z Excelu", detail=f"Záloha z {stav.get('vytvorene', '?')} | {stav.get('nazov_prazenia', '')}", sklad_pred=sklad_pred)
+    st.session_state.msg_excel_stav = ("success", f"Načítaný kompletný stav zo zálohy {stav.get('vytvorene', '')}. Predošlý stav je v histórii.")
+
 def obnov_zo_zalohy_callback():
     zoznam = st.session_state.get("historia_zoznam", [])
     idx = st.session_state.get("vyber_zalohy")
@@ -632,7 +710,7 @@ def logo_html():
 col_head_left, col_head_lock, col_head_logo = st.columns([14, 1, 2], vertical_alignment="center")
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 10.0 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 10.2 | Výroba, Sklad & ERP Kódy")
 with col_head_lock:
     ikona = "🔓" if st.session_state.get("admin_odomknute", False) else "🔒"
     if st.button(ikona, key="btn_zamok", help="Inventúra, log a obnova"):
@@ -667,6 +745,20 @@ with tab1:
             auto_uloz(historia=True, akcia="Ručné uloženie", detail="Snapshot do histórie")
             st.success("Aktuálny zoznam uložený (aj do histórie).")
             st.rerun()
+
+    with st.expander("💾 Kompletná záloha do Excelu (objednávky, pražiareň, baliareň, sklad, expedícia)"):
+        msg_xs = st.session_state.pop("msg_excel_stav", None)
+        if msg_xs: (st.success if msg_xs[0] == "success" else st.error)(msg_xs[1])
+        st.caption("Uloží všetko presne tak, ako to teraz je. Keď ho neskôr načítaš, pokračuješ tam, kde si skončil.")
+        cx1, cx2 = st.columns(2)
+        with cx1:
+            st.download_button("💾 Stiahnuť kompletný stav (.xlsx)", data=vytvor_excel_stavu(),
+                               file_name=f"Kikiriki_STAV_{st.session_state.nazov_prazenia}_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary", use_container_width=True)
+        with cx2:
+            st.file_uploader("Načítať stav zo zálohy:", type=["xlsx"], key="upl_stav_excel")
+            st.button("📂 Obnoviť appku z tohto súboru", use_container_width=True, on_click=nacitaj_stav_z_excelu_callback,
+                      disabled=st.session_state.get("upl_stav_excel") is None)
 
     st.divider()
 
@@ -802,7 +894,8 @@ with tab1:
                     auto_uloz(historia=True)
                     st.session_state.aktualne_objednavky = []
                     st.session_state.priebeh_prazenia = {}
-                    auto_uloz(akcia="Vyčistenie stola", detail=f"Odstránených {pocet} riadkov (stav pred je v histórii)")
+                    st.session_state.expedicia_rozpracovane = {}
+                    auto_uloz(akcia="Vyčistenie stola", detail=f"Odstránených {pocet} riadkov + rozpracované krabice (stav pred je v histórii)")
                     st.success("Stôl bol vyčistený (predošlý stav je v histórii). Fyzický sklad zostal nedotknutý.")
                     st.rerun()
         else:
@@ -1322,6 +1415,23 @@ with tab5:
     # --- HLAVIČKA S ROLETKOU ---
     NIKTO = "— vyber zákazníka —"
     odberatelia = sorted(set(o['Odberateľ'] for o in cakajuce_expedicia))
+
+    # Upratanie: krabice zákazníkov, ktorí už nemajú žiadnu otvorenú objednávku (napr. zmazané objednávky)
+    osirele = [z for z in list(rozpr) if z not in odberatelia]
+    if osirele:
+        for z in osirele:
+            rozpr.pop(z, None)
+            st.session_state.pop(f"exp_krabica_{z}", None)
+        auto_uloz(akcia="Expedícia – upratanie krabíc", detail="Bez otvorených objednávok: " + ", ".join(osirele))
+
+    def cb_reset_expedicie():
+        pocet = len([z for z in rozpr if ma_rozpracovane(z)])
+        rozpr.clear()
+        for k in [k for k in st.session_state.keys() if str(k).startswith("exp_krabica_")]:
+            st.session_state.pop(k, None)
+        st.session_state.exp_reset_potvrd = False
+        auto_uloz(akcia="Expedícia – reset krabíc", detail=f"Vymazané rozpracované krabice ({pocet} zákazníkov)")
+        st.session_state.msg_exp_hotovo = "🗑️ Všetky rozpracované krabice boli vymazané. Sklad (regál) sa nemenil."
     def popis_odb(z):
         if z == NIKTO: return NIKTO
         st_o = stav_odb(z)
@@ -1341,6 +1451,13 @@ with tab5:
 
     msg_hotovo = st.session_state.pop("msg_exp_hotovo", None)
     if msg_hotovo: st.success(msg_hotovo)
+
+    if any(ma_rozpracovane(z) for z in rozpr):
+        with st.expander("🗑️ Reset expedície – vymazať všetky rozpracované krabice"):
+            st.caption("Vymaže krabice všetkých zákazníkov. Objednávky ani regál sa nemenia – nič sa neodošle.")
+            st.checkbox("Áno, chcem vymazať všetky rozpracované krabice.", key="exp_reset_potvrd")
+            st.button("🗑️ Vymazať všetky krabice", key="exp_reset_btn", on_click=cb_reset_expedicie,
+                      disabled=not st.session_state.get("exp_reset_potvrd", False))
 
     if not cakajuce_expedicia:
         st.success("Všetky zákazky sú expedované.")
