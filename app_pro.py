@@ -384,7 +384,7 @@ def _zapis_harok(writer, df, nazov, skupina=None):
     fz = wb.add_format({"border": 1, "font_color": "#C0392B", "bold": True})
     for c, col in enumerate(df.columns):
         ws.write(0, c, str(col), hl)
-        ws.set_column(c, c, max(10, min(50, int(df[col].astype(str).map(len).max() if len(df) else 8) + 2)))
+        ws.set_column(c, c, max(10, min(50, int(df[col].map(lambda v: len(str(v))).max() if len(df) else 8) + 2)))
     ws.freeze_panes(1, 0)
     ws.autofilter(0, 0, len(df), len(df.columns) - 1)
     farba, posledna = True, None
@@ -676,7 +676,7 @@ def vytvor_excel_stavu():
             ws = writer.sheets[nazov]
             for c, col in enumerate(df.columns):
                 ws.write(0, c, str(col), hl)
-                ws.set_column(c, c, max(12, min(45, int(df[col].astype(str).map(len).max() if len(df) else 10) + 2)))
+                ws.set_column(c, c, max(12, min(45, int(df[col].map(lambda v: len(str(v))).max() if len(df) else 10) + 2)))
             ws.freeze_panes(1, 0)
 
         info = pd.DataFrame([
@@ -971,7 +971,7 @@ def logo_html():
 col_head_left, col_head_lock, col_head_logo = st.columns([14, 1, 2], vertical_alignment="center")
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 11.0 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 11.1 | Výroba, Sklad & ERP Kódy")
 with col_head_lock:
     ikona = "🔓" if st.session_state.get("admin_odomknute", False) else "🔒"
     if st.button(ikona, key="btn_zamok", help="Inventúra, log a obnova"):
@@ -995,6 +995,21 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
 # ========================================================
 # TAB 1: OBJEDNÁVKY
 # ========================================================
+def zapis_balenia_do_skladu(k, g, n):
+    """Zabalenie n sáčkov kávy k / gramáž g: dózy (RC podľa receptu) −, regál (PC) +, obaly a samolepky −."""
+    sk = st.session_state.sklad
+    pc_sku = get_pc_sku(MENU_KAVY.get(k), g)
+    sk["zabalena"][pc_sku] = sk["zabalena"].get(pc_sku, 0) + n
+    for mat_sku in karty_na_odpis(k, g):
+        typ_m = sk["karty"][mat_sku]["typ"]
+        sk[typ_m][mat_sku] = int(sk[typ_m].get(mat_sku, 0)) - n
+    vaha = n * g / 1000.0
+    if k in kavy_recepty:
+        for zrno, podiel in kavy_recepty[k]["recept"].items():
+            rc = SKU_UPRAZENA.get(zrno)
+            if rc: sk["uprazena"][rc] = sk["uprazena"].get(rc, 0.0) - vaha * podiel
+    return pc_sku
+
 # --- ZOSTÁVA: pruh pod záložkami (koľko dávok dopražiť a koľko sáčkov zabaliť) ---
 UPRAZENA_NA_DAVKU = KAPACITA_ZELENA_BATCH * (1 - STANDARDNY_VYPEK / 100.0)   # 5 kg zelenej -> 4 kg praženej
 
@@ -1306,7 +1321,7 @@ with tab1:
                         header_format = workbook.add_format({'bold': True, 'bg_color': '#4F81BD', 'font_color': 'white', 'border': 1})
                         for col_num, value in enumerate(df.columns):
                             worksheet.write(0, col_num, str(value), header_format)
-                            max_len = max(df[df.columns[col_num]].astype(str).map(len).max(), len(str(value))) + 2
+                            max_len = max(df[df.columns[col_num]].map(lambda v: len(str(v))).max(), len(str(value))) + 2
                             worksheet.set_column(col_num, col_num, max_len)
                         format_z1 = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1})
                         format_z2 = workbook.add_format({'bg_color': '#F2F2F2', 'border': 1})
@@ -1425,6 +1440,50 @@ with tab2:
 with tab3:
     zostava_pruh()
     st.markdown("### Baliareň")
+
+    # ---------- RUČNÉ BALENIE (mimo objednávok) ----------
+    msg_rb = st.session_state.pop("msg_rucne_balenie", None)
+    if msg_rb: st.success(msg_rb)
+    with st.expander("✋ Ručné balenie – mimo objednávok (z toho, čo je v dózach)"):
+        NOVY_ZAK, DO_SKLADU = "➕ Nový zákazník…", "📦 Do skladu (bez zákazníka)"
+        if st.session_state.pop("_rb_reset", False):
+            st.session_state.rb_n = 0
+        zakaznici = sorted({o.get('Odberateľ') for o in st.session_state.aktualne_objednavky
+                            if not o.get('❌ Zmazať') and not o.get('Sudy') and o.get('Odberateľ')})
+        rb1, rb2, rb3, rb4 = st.columns([2.2, 2, 1.2, 1.2], vertical_alignment="bottom")
+        with rb1: rb_zak = st.selectbox("Pre koho:", zakaznici + [NOVY_ZAK, DO_SKLADU], key="rb_zak")
+        with rb2: rb_kava = st.selectbox("Káva:", list(kavy_recepty.keys()), key="rb_kava")
+        with rb3: rb_g = st.selectbox("Gramáž:", gramaze_list, key="rb_g", format_func=lambda x: f"{x} g")
+        with rb4: rb_n = st.number_input("Počet (ks):", min_value=0, step=1, key="rb_n")
+        rb_novy = st.text_input("Meno nového zákazníka:", key="rb_novy").strip() if rb_zak == NOVY_ZAK else ""
+
+        # kontrola dóz pre zvolenú kávu
+        potreba_rb = rb_n * rb_g / 1000.0
+        stav_doz = []
+        for zrno, podiel in kavy_recepty[rb_kava]["recept"].items():
+            v_doze = float(st.session_state.sklad["uprazena"].get(SKU_UPRAZENA.get(zrno), 0.0))
+            stav_doz.append((zrno, v_doze, potreba_rb * podiel))
+        st.caption("V dóze: " + " · ".join(f"{z} {v:.2f} kg" + (f" (treba {p:.2f})" if rb_n else "") for z, v, p in stav_doz))
+        chyba_rb = [f"{z}: chýba {p - v:.2f} kg" for z, v, p in stav_doz if rb_n and p > v + 1e-9]
+        if chyba_rb: st.warning("⚠️ V dóze nie je dosť – " + ", ".join(chyba_rb) + ". Zabaliť sa dá, stav dózy pôjde do mínusu.")
+
+        meno_rb = rb_novy if rb_zak == NOVY_ZAK else rb_zak
+        if st.button("✅ Zabalené – zapísať", type="primary", key="rb_ok", disabled=(rb_n == 0 or (rb_zak == NOVY_ZAK and not rb_novy))):
+            if not je_duplicitny_klik("rucne_balenie", (meno_rb, rb_kava, rb_g, int(rb_n))):
+                sklad_pred = copy.deepcopy(st.session_state.sklad)
+                pc_rb = zapis_balenia_do_skladu(rb_kava, rb_g, int(rb_n))
+                if rb_zak != DO_SKLADU:
+                    # zákazníkovi pribudne zabalená položka -> objaví sa v Expedícii aj v Účtovníctve
+                    st.session_state.aktualne_objednavky.append({
+                        "Odberateľ": meno_rb, "Káva": rb_kava, "Gramáž": rb_g, "Kusy": int(rb_n), "Zabalené (ks)": int(rb_n),
+                        "Potvrdene": False, "Sudy": False, "❌ Zmazať": False, "Poznámka": "ručné balenie"})
+                    st.session_state.pop("tabulka_objednavok", None)
+                komu = "do skladu" if rb_zak == DO_SKLADU else f"pre {meno_rb}"
+                auto_uloz(akcia="Ručné balenie", detail=f"{rb_kava} {rb_g}g: +{int(rb_n)} ks ({pc_rb}) {komu}", sklad_pred=sklad_pred)
+                st.session_state.msg_rucne_balenie = (f"✅ Zabalené {int(rb_n)}× {rb_kava} {rb_g} g {komu}. "
+                                                      + ("Nájdeš ho v Expedícii." if rb_zak != DO_SKLADU else "Je v regáli (Zabalená – PC)."))
+                st.session_state._rb_reset = True
+                st.rerun()
     
     aktivne_balenie = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True and not o.get('Sudy', False)]
     plan_balenia = {}
@@ -1536,17 +1595,7 @@ with tab3:
                         zvysok -= dam
 
             # ZÁPIS DO PEVNÉHO SKLADU
-            vaha_do_sackov = pridavam * g / 1000.0
-            pc_sku = get_pc_sku(MENU_KAVY.get(k), g)
-            st.session_state.sklad["zabalena"][pc_sku] = st.session_state.sklad["zabalena"].get(pc_sku, 0) + pridavam
-            # Obalový materiál: podľa pravidiel odpisu na skladových kartách (sáčok podľa gramáže, samolepka podľa kávy …)
-            for mat_sku in karty_na_odpis(k, g):
-                typ_m = st.session_state.sklad["karty"][mat_sku]["typ"]
-                st.session_state.sklad[typ_m][mat_sku] = int(st.session_state.sklad[typ_m].get(mat_sku, 0)) - pridavam
-            if k in kavy_recepty:
-                for zrno, podiel in kavy_recepty[k]["recept"].items():
-                    zrno_sku = SKU_UPRAZENA.get(zrno)
-                    if zrno_sku: st.session_state.sklad["uprazena"][zrno_sku] -= (vaha_do_sackov * podiel)
+            pc_sku = zapis_balenia_do_skladu(k, g, pridavam)
 
             detail = f"{k} {g}g: +{pridavam} ks ({pc_sku})" + (f" pre {prednost}" if prednost else "") + (f", z toho {zvysok} ks navyše" if zvysok > 0 else "")
             auto_uloz(akcia="Balenie", detail=detail, sklad_pred=sklad_pred)
@@ -2279,7 +2328,7 @@ with tab6:
                 header_format = workbook.add_format({'bold': True, 'bg_color': '#4F81BD', 'font_color': 'white', 'border': 1})
                 for col_num, value in enumerate(df_export.columns):
                     worksheet.write(0, col_num, str(value), header_format)
-                    max_len = max(df_export[df_export.columns[col_num]].astype(str).map(len).max(), len(str(value))) + 2
+                    max_len = max(df_export[df_export.columns[col_num]].map(lambda v: len(str(v))).max(), len(str(value))) + 2
                     worksheet.set_column(col_num, col_num, max_len)
                 format_z1 = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1})
                 format_z2 = workbook.add_format({'bg_color': '#F2F2F2', 'border': 1})
