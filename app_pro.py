@@ -971,7 +971,7 @@ def logo_html():
 col_head_left, col_head_lock, col_head_logo = st.columns([14, 1, 2], vertical_alignment="center")
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 11.5 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 11.6 | Výroba, Sklad & ERP Kódy")
 with col_head_lock:
     ikona = "🔓" if st.session_state.get("admin_odomknute", False) else "🔒"
     if st.button(ikona, key="btn_zamok", help="Inventúra, log a obnova"):
@@ -2558,18 +2558,18 @@ def statistiky_z_logu(df_log):
     d["druh"] = None
     d.loc[akc.str.startswith(("Praženie", "Storno praženia")) & sku.str.startswith("GC"), "druh"] = "zelena"
     d.loc[akc.str.startswith(("Praženie", "Storno praženia")) & sku.str.startswith("RC"), "druh"] = "uprazena"
-    d.loc[akc.str.startswith("Balenie") & sku.str.startswith("PC"), "druh"] = "zabalene"
+    d.loc[akc.str.startswith(("Balenie", "Ručné balenie")) & sku.str.startswith("PC"), "druh"] = "zabalene"
     d.loc[akc.str.contains("xpedíc", regex=False) & sku.str.startswith("PC"), "druh"] = "expedovane"
     d = d[d["druh"].notna()].copy()
     d["gramaz"] = d["SKU"].map(lambda x: gramaz_z_pc(x) if str(x).startswith("PC") else 0)
     d["nazov"] = [n if n else s_ for n, s_ in zip(d["Názov"].astype(str), d["SKU"])]
     # kľúč praženia (spája GC− a RC+ riadok tej istej udalosti)
     zrno_z_sku = {**{v: k for k, v in SKU_ZELENA.items()}, **{v: k for k, v in SKU_UPRAZENA.items()}}
-    d["kluc"] = [f"{kc}|{zrno_z_sku.get(sk_, n_)}" for kc, sk_, n_ in zip(d["_kcas"].astype(str), d["SKU"].astype(str), d["nazov"])]
+    d["kluc"] = [f"{kc}|{sk_}" if str(sk_).startswith("PC") else f"{kc}|{zrno_z_sku.get(sk_, n_)}"
+                 for kc, sk_, n_ in zip(d["_kcas"].astype(str), d["SKU"].astype(str), d["nazov"])]
     d["vylucene"] = False
-    je_praz = d["druh"].isin(["zelena", "uprazena"])
     for kl, k in korekcie.items():
-        m = je_praz & (d["kluc"] == kl)
+        m = d["kluc"] == kl
         if not m.any(): continue
         if k.get("x"):
             d.loc[m, "vylucene"] = True
@@ -2577,6 +2577,8 @@ def statistiky_z_logu(df_log):
             dv_ = float(k["d"])
             d.loc[m & (d["druh"] == "zelena"), "zmena"] = -dv_ * KAPACITA_ZELENA_BATCH
             d.loc[m & (d["druh"] == "uprazena"), "zmena"] = dv_ * UPRAZENA_NA_DAVKU
+            d.loc[m & (d["druh"] == "zabalene"), "zmena"] = dv_
+            d.loc[m & (d["druh"] == "expedovane"), "zmena"] = -dv_
     d.attrs["start"] = start
     return d
 
@@ -2677,41 +2679,47 @@ with tab7:
             c_a.dataframe(df_pz, use_container_width=True)
             c_b.bar_chart(df_pz["Dávky"], horizontal=True, height=max(220, 32 * len(df_pz)))
 
-        with st.expander(f"📋 Zoznam pražení ({obd}) – čo sa započítalo · úprava a mazanie"):
-            zv = d_vsetko if obd == "Všetko" else d_vsetko[d_vsetko["mesiac"].map(lambda m: m.strftime("%m / %Y")) == obd]
-            zp = zv[zv["druh"] == "zelena"].copy()
-            if zp.empty:
-                st.caption("Žiadne praženia.")
-            else:
-                zp["Dávky"] = (-zp["zmena"] / KAPACITA_ZELENA_BATCH).round(2)
+        zv = d_vsetko if obd == "Všetko" else d_vsetko[d_vsetko["mesiac"].map(lambda m: m.strftime("%m / %Y")) == obd]
+
+        def editor_zoznamu(nadpis, druh, stlpec, prepocet, kluc_ed):
+            """Zoznam udalostí jedného druhu s možnosťou zmeniť množstvo alebo zaškrtnúť Nepočítať."""
+            with st.expander(f"📋 {nadpis} ({obd}) – čo sa započítalo · úprava a mazanie"):
+                zp = zv[zv["druh"] == druh].copy()
+                if zp.empty:
+                    st.caption("Žiadne záznamy."); return
+                zp[stlpec] = (zp["zmena"] * prepocet).round(2)
                 zp["Nepočítať"] = zp["vylucene"]
-                tab_zp = zp.sort_values("cas", ascending=False)[["Čas", "nazov", "Dávky", "Nepočítať", "Akcia", "kluc"]].rename(columns={"nazov": "Zrno"})
+                tab_zp = (zp.sort_values("cas", ascending=False)[["Čas", "nazov", stlpec, "Nepočítať", "Akcia", "Detail", "kluc"]]
+                          .rename(columns={"nazov": "Položka"}))
                 if not st.session_state.get("admin_odomknute", False):
                     st.dataframe(tab_zp.drop(columns=["kluc"]), hide_index=True, use_container_width=True)
-                    st.caption("🔒 Úpravu a mazanie odomkneš zámkom vpravo hore.")
-                else:
-                    st.caption("Uprav počet dávok alebo zaškrtni **Nepočítať** (skúšky, omyly) a daj Uložiť. Log ani sklad sa nemenia – mení sa len štatistika.")
-                    ed_zp = st.data_editor(tab_zp, hide_index=True, use_container_width=True, key=f"ed_zp_{obd}",
-                                           disabled=["Čas", "Zrno", "Akcia", "kluc"], column_config={
-                                               "kluc": None,
-                                               "Dávky": st.column_config.NumberColumn(min_value=0.0, step=1.0, format="%g"),
-                                               "Nepočítať": st.column_config.CheckboxColumn()})
-                    if st.button("💾 Uložiť úpravy štatistiky", key="btn_ulozit_zp", type="primary"):
-                        povodne = {r_["kluc"]: r_ for r_ in tab_zp.to_dict("records")}
-                        zmeny = {}
-                        for r_ in ed_zp.to_dict("records"):
-                            p_ = povodne.get(r_["kluc"])
-                            if p_ is None: continue
-                            if bool(r_["Nepočítať"]) != bool(p_["Nepočítať"]) or abs(float(r_["Dávky"] or 0) - float(p_["Dávky"])) > 1e-9:
-                                zmeny[r_["kluc"]] = {"x": True} if r_["Nepočítať"] else {"x": False, "d": float(r_["Dávky"] or 0)}
-                        if zmeny:
-                            polozky_z = list(zmeny.items())
-                            for i_z in range(0, len(polozky_z), 10):     # po 10 kusoch (detail v logu má limit dĺžky)
-                                auto_uloz(akcia=AKCIA_KOREKCIA_STAT, detail=json.dumps(dict(polozky_z[i_z:i_z + 10]), ensure_ascii=False))
-                            try: nacitaj_stat()
-                            except Exception: pass
-                            st.session_state.msg_stat = f"Štatistika upravená ({len(zmeny)} zmien)."
-                        st.rerun()
+                    st.caption("🔒 Úpravu a mazanie odomkneš zámkom vpravo hore."); return
+                st.caption(f"Uprav **{stlpec}** alebo zaškrtni **Nepočítať** (skúšky, omyly) a daj Uložiť. Log ani sklad sa nemenia – mení sa len štatistika.")
+                ed_zp = st.data_editor(tab_zp, hide_index=True, use_container_width=True, key=f"ed_{kluc_ed}_{obd}",
+                                       disabled=["Čas", "Položka", "Akcia", "Detail", "kluc"], column_config={
+                                           "kluc": None,
+                                           stlpec: st.column_config.NumberColumn(min_value=0.0, step=1.0, format="%g"),
+                                           "Nepočítať": st.column_config.CheckboxColumn()})
+                if st.button("💾 Uložiť úpravy štatistiky", key=f"btn_ulozit_{kluc_ed}", type="primary"):
+                    povodne = {r_["kluc"]: r_ for r_ in tab_zp.to_dict("records")}
+                    zmeny = {}
+                    for r_ in ed_zp.to_dict("records"):
+                        p_ = povodne.get(r_["kluc"])
+                        if p_ is None: continue
+                        if bool(r_["Nepočítať"]) != bool(p_["Nepočítať"]) or abs(float(r_[stlpec] or 0) - float(p_[stlpec])) > 1e-9:
+                            zmeny[r_["kluc"]] = {"x": True} if r_["Nepočítať"] else {"x": False, "d": float(r_[stlpec] or 0)}
+                    if zmeny:
+                        polozky_z = list(zmeny.items())
+                        for i_z in range(0, len(polozky_z), 10):     # po 10 kusoch (detail v logu má limit dĺžky)
+                            auto_uloz(akcia=AKCIA_KOREKCIA_STAT, detail=json.dumps(dict(polozky_z[i_z:i_z + 10]), ensure_ascii=False))
+                        try: nacitaj_stat()
+                        except Exception: pass
+                        st.session_state.msg_stat = f"Štatistika upravená ({len(zmeny)} zmien)."
+                    st.rerun()
+
+        editor_zoznamu("Zoznam pražení", "zelena", "Dávky", -1 / KAPACITA_ZELENA_BATCH, "praz")
+        editor_zoznamu("Zoznam balení", "zabalene", "Kusy", 1, "bal")
+        editor_zoznamu("Zoznam expedícií", "expedovane", "Kusy", -1, "exp")
 
         st.markdown(f"#### 📦 Zabalené po výrobkoch ({obd})")
         if zab.empty:
