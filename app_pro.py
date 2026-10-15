@@ -94,9 +94,9 @@ MAX_ZAZNAMOV_HISTORIE = 100
 # Log: jeden riadok za každú zmenu skladu / akciu
 NAZOV_LISTU_LOG = "Log"
 LOG_HLAVICKA = ["Čas", "Identifikátor", "Akcia", "Detail", "Sklad", "SKU", "Názov", "Pred", "Po", "Zmena"]
-NAZVY_SKLADU = {"zelena": "GC Zelená", "uprazena": "RC Dózy", "zabalena": "Výrobky PG", "obaly": "Obaly", "samolepky": "Samolepky"}
+NAZVY_SKLADU = {"zelena": "GC Zelená", "uprazena": "RC Dózy", "zabalena": "Zabalená PC", "obaly": "Obaly", "samolepky": "Samolepky"}
 # Kategórie skladových kariet: typ -> (názov hárku, merná jednotka)
-KATEGORIE_KARIET = {"zelena": ("GC", "kg"), "uprazena": ("RC", "kg"), "zabalena": ("Výrobky-PG", "ks"),
+KATEGORIE_KARIET = {"zelena": ("GC", "kg"), "uprazena": ("RC", "kg"), "zabalena": ("Zabalená-PC", "ks"),
                     "obaly": ("Obaly", "ks"), "samolepky": ("Samolepky", "ks")}
 TYPY_SKLADU = ["zelena", "uprazena", "zabalena", "obaly", "samolepky"]
 TYPY_MATERIAL = ["obaly", "samolepky"]   # karty spravované v 🔒 Správe skladu
@@ -678,7 +678,7 @@ def vytvor_excel_stavu():
                             for z, v in stav["prazenie"].items()]), "Pražiareň")
         hárok(pd.DataFrame([{"SKU": k, "Názov": NAZVY_ZELENA.get(k, ""), "Stav (kg)": round(float(v), 2)} for k, v in stav["sklad"]["zelena"].items()]), "Sklad GC")
         hárok(pd.DataFrame([{"SKU": k, "Názov": NAZVY_UPRAZENA.get(k, ""), "Stav (kg)": round(float(v), 2)} for k, v in stav["sklad"]["uprazena"].items()]), "Sklad RC")
-        hárok(pd.DataFrame([{"SKU": k, "Názov": NAZVY_ZABALENA.get(k, ""), "Stav (ks)": int(v)} for k, v in stav["sklad"]["zabalena"].items()]), "Sklad Výrobky")
+        hárok(pd.DataFrame([{"SKU": k, "Názov": NAZVY_ZABALENA.get(k, ""), "Stav (ks)": int(v)} for k, v in stav["sklad"]["zabalena"].items()]), "Sklad Zabalená PC")
         hárok(pd.DataFrame([{"SKU": k, "Názov": stav["sklad"].get("karty", {}).get(k, {}).get("nazov", ""), "Stav (ks)": int(v),
                              "Minimum (ks)": int(stav["sklad"].get("minima", {}).get(k, 0)),
                              "Odpis": popis_odpisu(stav["sklad"].get("karty", {}).get(k, {}).get("odpis")),
@@ -768,6 +768,12 @@ if 'sklad' not in st.session_state:
         st.session_state.expedicia_rozpracovane = {}
         st.session_state.info_cloud = f"Sme offline / Tabuľka je prázdna. (Detail: {cas})"
     st.session_state.pociatocny_nazov = n_prazenia if n_prazenia else f"Prazenie_PRO_{DNESNY_DATUM}"
+
+# Doplnenie chýbajúcich častí skladu (napr. session spustená pred aktualizáciou appky alebo starší stav v cloude)
+if 'sklad' in st.session_state:
+    _sk = st.session_state.sklad
+    if not _sk.get("karty") or any(t not in _sk for t in TYPY_SKLADU) or "etikety" in _sk:
+        st.session_state.sklad = inicializuj_sklad(_sk)
 
 if 'nazov_prazenia' not in st.session_state:
     st.session_state.nazov_prazenia = st.session_state.get('pociatocny_nazov', f"Prazenie_PRO_{DNESNY_DATUM}")
@@ -873,7 +879,7 @@ def spravca_dialog():
         if st.button("🔒 Zamknúť", use_container_width=True):
             st.session_state.admin_odomknute = False
             st.rerun()
-    st.caption("Inventúra je odomknutá v podzáložkách GC / RC / Výrobky – PG / Obaly a samolepky v záložke Sklad.")
+    st.caption("Inventúra je odomknutá v podzáložkách GC / RC / Zabalená – PC / Obaly a samolepky v záložke Sklad.")
 
     tab_log, tab_obnova, tab_karty = st.tabs(["**📜 Log**", "**⏪ Obnova**", "**🗂️ Skladové karty**"])
     with tab_karty:
@@ -950,7 +956,7 @@ def logo_html():
 col_head_left, col_head_lock, col_head_logo = st.columns([14, 1, 2], vertical_alignment="center")
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 10.5 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 10.6 | Výroba, Sklad & ERP Kódy")
 with col_head_lock:
     ikona = "🔓" if st.session_state.get("admin_odomknute", False) else "🔒"
     if st.button(ikona, key="btn_zamok", help="Inventúra, log a obnova"):
@@ -1459,7 +1465,7 @@ with tab3:
                                     st.rerun()
 
 # ========================================================
-# TAB 4: SKLAD (GC / RC / Výrobky + Inventúra, Log, Obnova)
+# TAB 4: SKLAD (GC / RC / Zabalená PC / Obaly a samolepky + Inventúra)
 # ========================================================
 def gramaz_z_pc(sku):
     try: return int(sku[2:sku.index("-")])
@@ -1499,7 +1505,7 @@ with tab4:
         st.download_button("📊 Stav skladu (.xlsx)", data=excel_stav_skladu(),
                            file_name=f"Kikiriki_Stav_skladu_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
-                           help="Aktuálny stav – každý sklad na samostatnom hárku (GC, RC, Výrobky-PG, Obaly, Etikety)")
+                           help="Aktuálny stav – každý sklad na samostatnom hárku (GC, RC, Zabalená-PC, Obaly, Samolepky)")
     with hs3:
         if st.button("📒 Skladové karty", use_container_width=True, help="Všetky pohyby po kartách s príjmom, výdajom a zostatkom"):
             st.session_state.karty_otvorene = True
@@ -1540,7 +1546,7 @@ with tab4:
 
     odomknute = st.session_state.get("admin_odomknute", False)
 
-    tab_gc, tab_rc, tab_pc, tab_ob = st.tabs(["**GC – Zelená káva**", "**RC – Upražená (dózy)**", "**Výrobky – PG**", "**Obaly a samolepky**"])
+    tab_gc, tab_rc, tab_pc, tab_ob = st.tabs(["**GC – Zelená káva**", "**RC – Upražená (dózy)**", "**Zabalená – PC**", "**Obaly a samolepky**"])
 
     # ---------- GC ----------
     with tab_gc:
@@ -1577,15 +1583,15 @@ with tab4:
         c1, c2, c3 = st.columns(3)
         c1.metric("Sáčkov spolu", int(df_pc["Stav (ks)"].sum()))
         c2.metric("Váha spolu", f"{df_pc['Váha (kg)'].sum():.2f} kg")
-        c3.metric("Výrobkov na sklade", int((df_pc["Stav (ks)"] > 0).sum()))
-        aj_nulove = st.toggle("Zobraziť aj výrobky s nulovým stavom", value=False, key="pc_aj_nulove")
+        c3.metric("Druhov na sklade", int((df_pc["Stav (ks)"] > 0).sum()))
+        aj_nulove = st.toggle("Zobraziť aj karty s nulovým stavom", value=False, key="pc_aj_nulove")
         df_pc_view = df_pc if aj_nulove else df_pc[df_pc["Stav (ks)"] != 0]
         if df_pc_view.empty:
             st.info("Na sklade nie sú žiadne zabalené sáčky.")
         else:
             st.dataframe(df_pc_view.style.map(zafarbi_zaporne, subset=["Stav (ks)", "Váha (kg)"]).format({"Váha (kg)": "{:.2f}"}),
                          use_container_width=True, hide_index=True)
-        inventura_editor("zabalena", "ks", "Výrobky", odomknute)
+        inventura_editor("zabalena", "ks", "Zabalená PC", odomknute)
 
     # ---------- OBALY A SAMOLEPKY ----------
     with tab_ob:
