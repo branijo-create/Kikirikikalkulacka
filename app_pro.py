@@ -971,7 +971,7 @@ def logo_html():
 col_head_left, col_head_lock, col_head_logo = st.columns([14, 1, 2], vertical_alignment="center")
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 11.1 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 11.2 | Výroba, Sklad & ERP Kódy")
 with col_head_lock:
     ikona = "🔓" if st.session_state.get("admin_odomknute", False) else "🔒"
     if st.button(ikona, key="btn_zamok", help="Inventúra, log a obnova"):
@@ -995,6 +995,29 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
 # ========================================================
 # TAB 1: OBJEDNÁVKY
 # ========================================================
+def stabilny_selectbox(label, options, state_key, format_func=str, v_adrese=False, **kw):
+    """Roletka, ktorá si pamätá výber, aj keď sa jej popisky menia (napr. „zostáva 12 ks“ → „zostáva 6 ks“).
+    Streamlit by inak pri zmene popisiek vytvoril novú roletku a výber by skočil na prvú položku."""
+    ulozene = st.session_state.get(state_key)
+    if ulozene is None and v_adrese:                    # po obnovení stránky / znovupripojení si výber vezme z adresy
+        ulozene = st.query_params.get(state_key)
+    if ulozene not in options:
+        ulozene = options[0] if options else None
+    popisky = tuple(str(format_func(o)) for o in options)
+    wkey = f"{state_key}__w{abs(hash(popisky)) % 10**8}"
+    if wkey in st.session_state and st.session_state[wkey] != ulozene:
+        del st.session_state[wkey]                     # výber zmenil kód (napr. reset filtra) -> roletka sa nastaví podľa neho
+    def _sync():
+        st.session_state[state_key] = st.session_state[wkey]
+    val = st.selectbox(label, options, index=options.index(ulozene) if ulozene in options else 0,
+                       format_func=format_func, key=wkey, on_change=_sync, **kw)
+    st.session_state[state_key] = val
+    if v_adrese:
+        try:
+            if st.query_params.get(state_key) != str(val): st.query_params[state_key] = str(val)
+        except Exception: pass
+    return val
+
 def zapis_balenia_do_skladu(k, g, n):
     """Zabalenie n sáčkov kávy k / gramáž g: dózy (RC podľa receptu) −, regál (PC) +, obaly a samolepky −."""
     sk = st.session_state.sklad
@@ -1444,46 +1467,47 @@ with tab3:
     # ---------- RUČNÉ BALENIE (mimo objednávok) ----------
     msg_rb = st.session_state.pop("msg_rucne_balenie", None)
     if msg_rb: st.success(msg_rb)
-    with st.expander("✋ Ručné balenie – mimo objednávok (z toho, čo je v dózach)"):
-        NOVY_ZAK, DO_SKLADU = "➕ Nový zákazník…", "📦 Do skladu (bez zákazníka)"
-        if st.session_state.pop("_rb_reset", False):
-            st.session_state.rb_n = 0
-        zakaznici = sorted({o.get('Odberateľ') for o in st.session_state.aktualne_objednavky
-                            if not o.get('❌ Zmazať') and not o.get('Sudy') and o.get('Odberateľ')})
-        rb1, rb2, rb3, rb4 = st.columns([2.2, 2, 1.2, 1.2], vertical_alignment="bottom")
-        with rb1: rb_zak = st.selectbox("Pre koho:", zakaznici + [NOVY_ZAK, DO_SKLADU], key="rb_zak")
-        with rb2: rb_kava = st.selectbox("Káva:", list(kavy_recepty.keys()), key="rb_kava")
-        with rb3: rb_g = st.selectbox("Gramáž:", gramaze_list, key="rb_g", format_func=lambda x: f"{x} g")
-        with rb4: rb_n = st.number_input("Počet (ks):", min_value=0, step=1, key="rb_n")
-        rb_novy = st.text_input("Meno nového zákazníka:", key="rb_novy").strip() if rb_zak == NOVY_ZAK else ""
+    if st.toggle("✋ Ručné balenie – mimo objednávok (z toho, čo je v dózach)", key="rb_otvorene"):
+      with st.container(border=True):
+          NOVY_ZAK, DO_SKLADU = "➕ Nový zákazník…", "📦 Do skladu (bez zákazníka)"
+          if st.session_state.pop("_rb_reset", False):
+              st.session_state.rb_n = 0
+          zakaznici = sorted({o.get('Odberateľ') for o in st.session_state.aktualne_objednavky
+                              if not o.get('❌ Zmazať') and not o.get('Sudy') and o.get('Odberateľ')})
+          rb1, rb2, rb3, rb4 = st.columns([2.2, 2, 1.2, 1.2], vertical_alignment="bottom")
+          with rb1: rb_zak = st.selectbox("Pre koho:", zakaznici + [NOVY_ZAK, DO_SKLADU], key="rb_zak")
+          with rb2: rb_kava = st.selectbox("Káva:", list(kavy_recepty.keys()), key="rb_kava")
+          with rb3: rb_g = st.selectbox("Gramáž:", gramaze_list, key="rb_g", format_func=lambda x: f"{x} g")
+          with rb4: rb_n = st.number_input("Počet (ks):", min_value=0, step=1, key="rb_n")
+          rb_novy = st.text_input("Meno nového zákazníka:", key="rb_novy").strip() if rb_zak == NOVY_ZAK else ""
 
-        # kontrola dóz pre zvolenú kávu
-        potreba_rb = rb_n * rb_g / 1000.0
-        stav_doz = []
-        for zrno, podiel in kavy_recepty[rb_kava]["recept"].items():
-            v_doze = float(st.session_state.sklad["uprazena"].get(SKU_UPRAZENA.get(zrno), 0.0))
-            stav_doz.append((zrno, v_doze, potreba_rb * podiel))
-        st.caption("V dóze: " + " · ".join(f"{z} {v:.2f} kg" + (f" (treba {p:.2f})" if rb_n else "") for z, v, p in stav_doz))
-        chyba_rb = [f"{z}: chýba {p - v:.2f} kg" for z, v, p in stav_doz if rb_n and p > v + 1e-9]
-        if chyba_rb: st.warning("⚠️ V dóze nie je dosť – " + ", ".join(chyba_rb) + ". Zabaliť sa dá, stav dózy pôjde do mínusu.")
+          # kontrola dóz pre zvolenú kávu
+          potreba_rb = rb_n * rb_g / 1000.0
+          stav_doz = []
+          for zrno, podiel in kavy_recepty[rb_kava]["recept"].items():
+              v_doze = float(st.session_state.sklad["uprazena"].get(SKU_UPRAZENA.get(zrno), 0.0))
+              stav_doz.append((zrno, v_doze, potreba_rb * podiel))
+          st.caption("V dóze: " + " · ".join(f"{z} {v:.2f} kg" + (f" (treba {p:.2f})" if rb_n else "") for z, v, p in stav_doz))
+          chyba_rb = [f"{z}: chýba {p - v:.2f} kg" for z, v, p in stav_doz if rb_n and p > v + 1e-9]
+          if chyba_rb: st.warning("⚠️ V dóze nie je dosť – " + ", ".join(chyba_rb) + ". Zabaliť sa dá, stav dózy pôjde do mínusu.")
 
-        meno_rb = rb_novy if rb_zak == NOVY_ZAK else rb_zak
-        if st.button("✅ Zabalené – zapísať", type="primary", key="rb_ok", disabled=(rb_n == 0 or (rb_zak == NOVY_ZAK and not rb_novy))):
-            if not je_duplicitny_klik("rucne_balenie", (meno_rb, rb_kava, rb_g, int(rb_n))):
-                sklad_pred = copy.deepcopy(st.session_state.sklad)
-                pc_rb = zapis_balenia_do_skladu(rb_kava, rb_g, int(rb_n))
-                if rb_zak != DO_SKLADU:
-                    # zákazníkovi pribudne zabalená položka -> objaví sa v Expedícii aj v Účtovníctve
-                    st.session_state.aktualne_objednavky.append({
-                        "Odberateľ": meno_rb, "Káva": rb_kava, "Gramáž": rb_g, "Kusy": int(rb_n), "Zabalené (ks)": int(rb_n),
-                        "Potvrdene": False, "Sudy": False, "❌ Zmazať": False, "Poznámka": "ručné balenie"})
-                    st.session_state.pop("tabulka_objednavok", None)
-                komu = "do skladu" if rb_zak == DO_SKLADU else f"pre {meno_rb}"
-                auto_uloz(akcia="Ručné balenie", detail=f"{rb_kava} {rb_g}g: +{int(rb_n)} ks ({pc_rb}) {komu}", sklad_pred=sklad_pred)
-                st.session_state.msg_rucne_balenie = (f"✅ Zabalené {int(rb_n)}× {rb_kava} {rb_g} g {komu}. "
-                                                      + ("Nájdeš ho v Expedícii." if rb_zak != DO_SKLADU else "Je v regáli (Zabalená – PC)."))
-                st.session_state._rb_reset = True
-                st.rerun()
+          meno_rb = rb_novy if rb_zak == NOVY_ZAK else rb_zak
+          if st.button("✅ Zabalené – zapísať", type="primary", key="rb_ok", disabled=(rb_n == 0 or (rb_zak == NOVY_ZAK and not rb_novy))):
+              if not je_duplicitny_klik("rucne_balenie", (meno_rb, rb_kava, rb_g, int(rb_n))):
+                  sklad_pred = copy.deepcopy(st.session_state.sklad)
+                  pc_rb = zapis_balenia_do_skladu(rb_kava, rb_g, int(rb_n))
+                  if rb_zak != DO_SKLADU:
+                      # zákazníkovi pribudne zabalená položka -> objaví sa v Expedícii aj v Účtovníctve
+                      st.session_state.aktualne_objednavky.append({
+                          "Odberateľ": meno_rb, "Káva": rb_kava, "Gramáž": rb_g, "Kusy": int(rb_n), "Zabalené (ks)": int(rb_n),
+                          "Potvrdene": False, "Sudy": False, "❌ Zmazať": False, "Poznámka": "ručné balenie"})
+                      st.session_state.pop("tabulka_objednavok", None)
+                  komu = "do skladu" if rb_zak == DO_SKLADU else f"pre {meno_rb}"
+                  auto_uloz(akcia="Ručné balenie", detail=f"{rb_kava} {rb_g}g: +{int(rb_n)} ks ({pc_rb}) {komu}", sklad_pred=sklad_pred)
+                  st.session_state.msg_rucne_balenie = (f"✅ Zabalené {int(rb_n)}× {rb_kava} {rb_g} g {komu}. "
+                                                        + ("Nájdeš ho v Expedícii." if rb_zak != DO_SKLADU else "Je v regáli (Zabalená – PC)."))
+                  st.session_state._rb_reset = True
+                  st.rerun()
     
     aktivne_balenie = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True and not o.get('Sudy', False)]
     plan_balenia = {}
@@ -1544,6 +1568,8 @@ with tab3:
             if o.get('Potvrdene'): continue
             zostava_zak[o['Odberateľ']] = zostava_zak.get(o['Odberateľ'], 0) + max(0, int(o['Kusy']) - int(o.get('Zabalené (ks)', 0)))
         moznosti_zak = [VSETCI] + sorted(zostava_zak)
+        if st.session_state.get("balenie_zakaznik") is None:
+            st.session_state.balenie_zakaznik = st.query_params.get("balenie_zakaznik")
         if st.session_state.get("balenie_zakaznik") not in moznosti_zak:
             st.session_state.balenie_zakaznik = VSETCI
 
@@ -1555,7 +1581,7 @@ with tab3:
         with col_ul:
             st.markdown("#### 📦 Úlohy pre baliča (Sáčkovanie)")
         with col_zak:
-            vybrany_zak = st.selectbox("Balím pre:", moznosti_zak, format_func=popis_zakaznika, key="balenie_zakaznik")
+            vybrany_zak = stabilny_selectbox("Balím pre:", moznosti_zak, "balenie_zakaznik", format_func=popis_zakaznika, v_adrese=True)
 
         msg_bal = st.session_state.pop("msg_balenie", None)
         if msg_bal: st.info(msg_bal)
@@ -2011,6 +2037,8 @@ with tab5:
         rozpr_ik = " · 📦 rozpracované" if ma_rozpracovane(z) else ""
         return f"{ik} {z} – zabalené {zab}/{obj} ks{rozpr_ik}"
     moznosti = [NIKTO] + odberatelia
+    if st.session_state.get("exp_zakaznik") is None:
+        st.session_state.exp_zakaznik = st.query_params.get("exp_zakaznik")
     if st.session_state.get("exp_zakaznik") not in moznosti:
         st.session_state.exp_zakaznik = NIKTO
 
@@ -2018,7 +2046,7 @@ with tab5:
     with col_h:
         st.markdown("### Expedícia (Kuriér)")
     with col_r:
-        odb = st.selectbox("Zákazník:", moznosti, format_func=popis_odb, key="exp_zakaznik", disabled=not odberatelia)
+        odb = stabilny_selectbox("Zákazník:", moznosti, "exp_zakaznik", format_func=popis_odb, v_adrese=bool(odberatelia), disabled=not odberatelia)
 
     msg_hotovo = st.session_state.pop("msg_exp_hotovo", None)
     if msg_hotovo: st.success(msg_hotovo)
@@ -2101,14 +2129,14 @@ with tab5:
 
         f1, f2, f3, f4 = st.columns([1.6, 2, 1.6, 1.4], vertical_alignment="bottom")
         with f1:
-            st.selectbox("Krabica:", moznosti_krab, key=k_krab,
-                         format_func=lambda i: f"Krabica č. {i+1} ({sum(krabice[i].values())} ks)" if i < len(krabice) else f"➕ Nová krabica č. {i+1}")
+            stabilny_selectbox("Krabica:", moznosti_krab, k_krab,
+                               format_func=lambda i: f"Krabica č. {i+1} ({sum(krabice[i].values())} ks)" if i < len(krabice) else f"➕ Nová krabica č. {i+1}")
         with f2:
-            st.selectbox("Káva:", [VSETKY] + kavy_moz, key=k_kava,
-                         format_func=lambda k: k if k == VSETKY else f"{k} – zostáva {zost_kava(k)} ks")
+            stabilny_selectbox("Káva:", [VSETKY] + kavy_moz, k_kava,
+                               format_func=lambda k: k if k == VSETKY else f"{k} – zostáva {zost_kava(k)} ks")
         with f3:
-            st.selectbox("Gramáž:", [VSETKY] + gram_moz, key=k_gram,
-                         format_func=lambda g: g if g == VSETKY else f"{g} g – zostáva {zost_gram(g)} ks")
+            stabilny_selectbox("Gramáž:", [VSETKY] + gram_moz, k_gram,
+                               format_func=lambda g: g if g == VSETKY else f"{g} g – zostáva {zost_gram(g)} ks")
         with f4:
             st.toggle("Aj hotové", key=k_hotove, help="Zobrazí aj položky, ktoré sú už celé v krabiciach")
             st.toggle("Mimo objednávky", key=k_mimo, help="Náhrada alebo navyše: ponúkne všetko, čo je v regáli, aj keď to zákazník nemá objednané")
