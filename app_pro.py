@@ -94,7 +94,8 @@ MAX_ZAZNAMOV_HISTORIE = 100
 # Log: jeden riadok za každú zmenu skladu / akciu
 NAZOV_LISTU_LOG = "Log"
 LOG_HLAVICKA = ["Čas", "Identifikátor", "Akcia", "Detail", "Sklad", "SKU", "Názov", "Pred", "Po", "Zmena"]
-NAZVY_SKLADU = {"zelena": "Zelená", "uprazena": "Dózy", "zabalena": "Regál"}
+NAZVY_SKLADU = {"zelena": "Zelená", "uprazena": "Dózy", "zabalena": "Regál", "obaly": "Obaly", "etikety": "Etikety"}
+TYPY_SKLADU = ["zelena", "uprazena", "zabalena", "obaly", "etikety"]
 
 kavy_recepty = {
     "Brazília": {"vypek": STANDARDNY_VYPEK, "recept": {"Brazília Santos": 1.0}},
@@ -173,6 +174,12 @@ NAZVY_ZELENA = {v: k for k, v in SKU_ZELENA.items()}
 NAZVY_UPRAZENA = {v: k for k, v in SKU_UPRAZENA.items()}
 NAZVY_ZABALENA = {get_pc_sku(rc, g): f"{menu} {g}g" for menu, rc in MENU_KAVY.items() for g in gramaze_list}
 PC_NA_KAVU = {get_pc_sku(rc, g): (menu, g) for menu, rc in MENU_KAVY.items() for g in gramaze_list}
+
+# Obalový materiál: prázdne sáčky podľa gramáže, etikety podľa kávy
+SKU_OBAL = {g: f"OB{g}" for g in gramaze_list}                                  # OB220, OB500, OB1000
+NAZVY_OBALY = {f"OB{g}": f"Prázdny sáčok {g} g" for g in gramaze_list}
+SKU_ETIKETA = {menu: f"ET{rc[2:]}" for menu, rc in MENU_KAVY.items()}             # ET001 … ETB004
+NAZVY_ETIKETY = {v: f"Etiketa {k}" for k, v in SKU_ETIKETA.items()}
 
 PRAZDNY_STAV = {"objednavky": [], "prazenie": {}, "sklad": {"zelena": {}, "uprazena": {}, "zabalena": {}}}
 
@@ -271,11 +278,13 @@ def uloz_snapshot_historie(spreadsheet, cas, nazov, kusky):
 def nazov_sku(typ, sku):
     if typ == "zelena": return NAZVY_ZELENA.get(sku, "")
     if typ == "uprazena": return NAZVY_UPRAZENA.get(sku, "")
+    if typ == "obaly": return NAZVY_OBALY.get(sku, "")
+    if typ == "etikety": return NAZVY_ETIKETY.get(sku, "")
     return NAZVY_ZABALENA.get(sku, "")
 
 def diff_skladu(pred, po):
     zmeny = []
-    for typ in ["zelena", "uprazena", "zabalena"]:
+    for typ in TYPY_SKLADU:
         a_d = (pred or {}).get(typ, {})
         b_d = (po or {}).get(typ, {})
         for sku in sorted(set(a_d) | set(b_d)):
@@ -442,11 +451,15 @@ def over_heslo(zadane):
 
 # --- AUTO-LOAD A INICIALIZÁCIA SKLADU ---
 def inicializuj_sklad(nacitany_sklad):
-    sklad = {"zelena": {}, "uprazena": {}, "zabalena": {}}
+    sklad = {t: {} for t in TYPY_SKLADU}
+    sklad["minima"] = {}
     if nacitany_sklad:
-        sklad["zelena"] = nacitany_sklad.get("zelena", {})
-        sklad["uprazena"] = nacitany_sklad.get("uprazena", {})
-        sklad["zabalena"] = nacitany_sklad.get("zabalena", {})
+        for t in TYPY_SKLADU + ["minima"]:
+            sklad[t] = dict(nacitany_sklad.get(t, {}) or {})
+    for sku in SKU_OBAL.values():
+        sklad["obaly"].setdefault(sku, 0)
+    for sku in SKU_ETIKETA.values():
+        sklad["etikety"].setdefault(sku, 0)
     
     for sku in SKU_ZELENA.values():
         if sku not in sklad["zelena"]: sklad["zelena"][sku] = 0.0
@@ -516,6 +529,9 @@ def vytvor_excel_stavu():
         hárok(pd.DataFrame([{"SKU": k, "Názov": NAZVY_ZELENA.get(k, ""), "Stav (kg)": round(float(v), 2)} for k, v in stav["sklad"]["zelena"].items()]), "Sklad GC")
         hárok(pd.DataFrame([{"SKU": k, "Názov": NAZVY_UPRAZENA.get(k, ""), "Stav (kg)": round(float(v), 2)} for k, v in stav["sklad"]["uprazena"].items()]), "Sklad RC")
         hárok(pd.DataFrame([{"SKU": k, "Názov": NAZVY_ZABALENA.get(k, ""), "Stav (ks)": int(v)} for k, v in stav["sklad"]["zabalena"].items()]), "Sklad Výrobky")
+        hárok(pd.DataFrame([{"SKU": k, "Názov": {**NAZVY_OBALY, **NAZVY_ETIKETY}.get(k, ""), "Stav (ks)": int(v),
+                             "Minimum (ks)": int(stav["sklad"].get("minima", {}).get(k, 0))}
+                            for t in ("obaly", "etikety") for k, v in stav["sklad"].get(t, {}).items()]), "Obaly a etikety")
         hárok(pd.DataFrame([{"Zákazník": z, "Krabica": i + 1, "SKU": s_, "Názov": NAZVY_ZABALENA.get(s_, s_), "Ks": n}
                             for z, r in stav["expedicia"].items() for i, k in enumerate(r.get("krabice", [])) for s_, n in k.items()]), "Expedícia rozprac.")
 
@@ -710,7 +726,7 @@ def logo_html():
 col_head_left, col_head_lock, col_head_logo = st.columns([14, 1, 2], vertical_alignment="center")
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 10.2 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 10.3 | Výroba, Sklad & ERP Kódy")
 with col_head_lock:
     ikona = "🔓" if st.session_state.get("admin_odomknute", False) else "🔒"
     if st.button(ikona, key="btn_zamok", help="Inventúra, log a obnova"):
@@ -1154,6 +1170,10 @@ with tab3:
             vaha_do_sackov = pridavam * g / 1000.0
             pc_sku = get_pc_sku(MENU_KAVY.get(k), g)
             st.session_state.sklad["zabalena"][pc_sku] = st.session_state.sklad["zabalena"].get(pc_sku, 0) + pridavam
+            # Obalový materiál: 1 prázdny sáčok + 1 etiketa na každý zabalený kus
+            ob_sku, et_sku = SKU_OBAL.get(g), SKU_ETIKETA.get(k)
+            if ob_sku: st.session_state.sklad["obaly"][ob_sku] = int(st.session_state.sklad["obaly"].get(ob_sku, 0)) - pridavam
+            if et_sku: st.session_state.sklad["etikety"][et_sku] = int(st.session_state.sklad["etikety"].get(et_sku, 0)) - pridavam
             if k in kavy_recepty:
                 for zrno, podiel in kavy_recepty[k]["recept"].items():
                     zrno_sku = SKU_UPRAZENA.get(zrno)
@@ -1189,6 +1209,13 @@ with tab3:
                 
                 for p in polozky_pre_kavu:
                     chýba_ks = max(0, p['ciel'] - p['hotovo'])
+                    if chýba_ks > 0:
+                        ob_s, et_s = SKU_OBAL.get(p['gramaz']), SKU_ETIKETA.get(p['kava'])
+                        ma_ob = int(st.session_state.sklad["obaly"].get(ob_s, 0)); ma_et = int(st.session_state.sklad["etikety"].get(et_s, 0))
+                        nedost = [f"sáčkov {p['gramaz']} g (máš {ma_ob})" if ma_ob < chýba_ks else "",
+                                  f"etikiet {p['kava']} (máš {ma_et})" if ma_et < chýba_ks else ""]
+                        nedost = [x for x in nedost if x]
+                        if nedost: st.warning(f"⚠️ Na {chýba_ks} ks {p['kava']} {p['gramaz']} g nie je dosť " + " a ".join(nedost) + ".")
                     col1, col2 = st.columns([3, 1])
                     with col1:
                         if chýba_ks <= 0: st.markdown(f"✅ **{p['gramaz']}g** sáčok - Vyrobených {p['hotovo']} / {p['ciel']} ks")
@@ -1224,7 +1251,7 @@ def inventura_editor(typ, jednotka, akcia, odomknute):
         return
     with st.expander("🔒 Inventúra – ručne prepísať stav", expanded=False):
         st.warning("Úpravou v tabuľke natvrdo prepíšeš evidenčné stavy. Zmena sa zapíše do logu aj histórie.")
-        je_ks = typ == "zabalena"
+        je_ks = typ in ("zabalena", "obaly", "etikety")
         riadky = []
         for sku, hodnota in st.session_state.sklad[typ].items():
             h = int(hodnota) if je_ks else round(float(hodnota), 2)
@@ -1244,7 +1271,7 @@ with tab4:
 
     odomknute = st.session_state.get("admin_odomknute", False)
 
-    tab_gc, tab_rc, tab_pc = st.tabs(["**GC – Zelená káva**", "**RC – Upražená (dózy)**", "**Výrobky – Sáčky**"])
+    tab_gc, tab_rc, tab_pc, tab_ob = st.tabs(["**GC – Zelená káva**", "**RC – Upražená (dózy)**", "**Výrobky – Sáčky**", "**Obaly a etikety**"])
 
     # ---------- GC ----------
     with tab_gc:
@@ -1290,6 +1317,92 @@ with tab4:
             st.dataframe(df_pc_view.style.map(zafarbi_zaporne, subset=["Stav (ks)", "Váha (kg)"]).format({"Váha (kg)": "{:.2f}"}),
                          use_container_width=True, hide_index=True)
         inventura_editor("zabalena", "ks", "Výrobky", odomknute)
+
+    # ---------- OBALY A ETIKETY ----------
+    with tab_ob:
+        st.caption("Prázdne sáčky a etikety. Každý zabalený kus v Baliarni automaticky odpíše 1 sáčok a 1 etiketu.")
+        sk = st.session_state.sklad
+        minima = sk.setdefault("minima", {})
+
+        # potreba na ešte nezabalené otvorené objednávky
+        potreba_ob, potreba_et = {}, {}
+        for o in st.session_state.aktualne_objednavky:
+            if o.get('❌ Zmazať') or o.get('Sudy') or o.get('Potvrdene'): continue
+            chyba_zab = max(0, int(o.get('Kusy', 0)) - int(o.get('Zabalené (ks)', 0)))
+            if not chyba_zab: continue
+            ob_s, et_s = SKU_OBAL.get(o.get('Gramáž')), SKU_ETIKETA.get(o.get('Káva'))
+            if ob_s: potreba_ob[ob_s] = potreba_ob.get(ob_s, 0) + chyba_zab
+            if et_s: potreba_et[et_s] = potreba_et.get(et_s, 0) + chyba_zab
+
+        def tabulka_mat(typ, nazvy, potreba):
+            riadky = []
+            for s_, v in sk[typ].items():
+                stav = int(v); mn = int(minima.get(s_, 0)); pot = int(potreba.get(s_, 0))
+                po_zabaleni = stav - pot
+                if stav < 0 or po_zabaleni < 0: sig = "🔴 Chýba"
+                elif mn and po_zabaleni < mn: sig = "🟠 Objednať"
+                else: sig = "🟢 OK"
+                riadky.append({"Stav": sig, "SKU": s_, "Názov": nazvy.get(s_, s_), "Na sklade (ks)": stav,
+                               "Treba na otvorené obj.": pot, "Zostane po zabalení": po_zabaleni, "Minimum": mn,
+                               "Dokúpiť (ks)": max(0, (mn - po_zabaleni) if mn else -po_zabaleni)})
+            return pd.DataFrame(riadky)
+
+        df_ob = tabulka_mat("obaly", NAZVY_OBALY, potreba_ob)
+        df_et = tabulka_mat("etikety", NAZVY_ETIKETY, potreba_et)
+        na_nakup = pd.concat([df_ob, df_et])
+        na_nakup = na_nakup[na_nakup["Dokúpiť (ks)"] > 0]
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Prázdne sáčky spolu", int(df_ob["Na sklade (ks)"].sum()))
+        c2.metric("Etikety spolu", int(df_et["Na sklade (ks)"].sum()))
+        c3.metric("Položiek na nákup", len(na_nakup))
+        if not na_nakup.empty:
+            st.error("🛒 **Treba nakúpiť:** " + ", ".join(f"{r['Názov']} – {r['Dokúpiť (ks)']} ks" for _, r in na_nakup.iterrows()))
+
+        farba = lambda v: ("color:#C0392B;font-weight:800;" if str(v).startswith("🔴") else ("color:#D35400;font-weight:800;" if str(v).startswith("🟠") else ""))
+        st.markdown("##### Prázdne sáčky")
+        st.dataframe(df_ob.style.map(farba, subset=["Stav"]).map(zafarbi_zaporne, subset=["Na sklade (ks)", "Zostane po zabalení"]),
+                     use_container_width=True, hide_index=True)
+        st.markdown("##### Etikety")
+        aj_nul_et = st.toggle("Zobraziť aj etikety s nulovým stavom a bez potreby", value=True, key="et_aj_nulove")
+        df_et_v = df_et if aj_nul_et else df_et[(df_et["Na sklade (ks)"] != 0) | (df_et["Treba na otvorené obj."] > 0)]
+        st.dataframe(df_et_v.style.map(farba, subset=["Stav"]).map(zafarbi_zaporne, subset=["Na sklade (ks)", "Zostane po zabalení"]),
+                     use_container_width=True, hide_index=True)
+
+        # --- PRÍJEM (nákup) ---
+        with st.expander("📥 Príjem na sklad (prišiel nákup)"):
+            vsetky_mat = {**{s_: NAZVY_OBALY[s_] for s_ in sk["obaly"] if s_ in NAZVY_OBALY},
+                          **{s_: NAZVY_ETIKETY[s_] for s_ in sk["etikety"] if s_ in NAZVY_ETIKETY}}
+            with st.form("form_prijem_mat", clear_on_submit=True):
+                p1, p2 = st.columns([3, 1])
+                with p1: mat_sku = st.selectbox("Položka:", list(vsetky_mat), format_func=lambda x: f"{vsetky_mat[x]} ({x})")
+                with p2: mat_ks = st.number_input("Prijaté (ks):", min_value=0, step=50)
+                poznamka = st.text_input("Poznámka (dodávateľ, faktúra):")
+                ok_prijem = st.form_submit_button("📥 Naskladniť", type="primary")
+            if ok_prijem and mat_ks > 0:
+                if not je_duplicitny_klik(f"prijem_{mat_sku}", int(mat_ks)):
+                    sklad_pred = copy.deepcopy(sk)
+                    typ_m = "obaly" if mat_sku in sk["obaly"] else "etikety"
+                    sk[typ_m][mat_sku] = int(sk[typ_m].get(mat_sku, 0)) + int(mat_ks)
+                    auto_uloz(historia=True, akcia="Príjem obalov/etikiet", detail=f"{vsetky_mat[mat_sku]}: +{int(mat_ks)} ks" + (f" | {poznamka}" if poznamka else ""), sklad_pred=sklad_pred)
+                    st.session_state.msg_prijem = f"📥 Naskladnené: {vsetky_mat[mat_sku]} +{int(mat_ks)} ks"
+                    st.rerun()
+        msg_pr = st.session_state.pop("msg_prijem", None)
+        if msg_pr: st.success(msg_pr)
+
+        # --- MINIMÁ (kedy nakúpiť) ---
+        if odomknute:
+            with st.expander("⚙️ Minimálne zásoby (od akého stavu hlásiť nákup)"):
+                df_min = pd.DataFrame([{"SKU": s_, "Názov": {**NAZVY_OBALY, **NAZVY_ETIKETY}.get(s_, s_), "Minimum (ks)": int(minima.get(s_, 0))}
+                                       for s_ in list(sk["obaly"]) + list(sk["etikety"])])
+                ed_min = st.data_editor(df_min, hide_index=True, use_container_width=True, disabled=["SKU", "Názov"], key="ed_minima")
+                if st.button("💾 Uložiť minimá", key="btn_minima"):
+                    for r_ in ed_min.to_dict("records"):
+                        minima[r_["SKU"]] = int(r_["Minimum (ks)"] or 0)
+                    auto_uloz(akcia="Nastavenie miním", detail="; ".join(f"{k}={v}" for k, v in minima.items() if v))
+                    st.rerun()
+        inventura_editor("obaly", "ks", "Prázdne sáčky", odomknute)
+        inventura_editor("etikety", "ks", "Etikety", odomknute)
 
 
 # ========================================================
