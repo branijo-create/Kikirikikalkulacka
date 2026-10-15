@@ -956,7 +956,7 @@ def logo_html():
 col_head_left, col_head_lock, col_head_logo = st.columns([14, 1, 2], vertical_alignment="center")
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 10.6 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 10.7 | Výroba, Sklad & ERP Kódy")
 with col_head_lock:
     ikona = "🔓" if st.session_state.get("admin_odomknute", False) else "🔒"
     if st.button(ikona, key="btn_zamok", help="Inventúra, log a obnova"):
@@ -980,7 +980,50 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 # ========================================================
 # TAB 1: OBJEDNÁVKY
 # ========================================================
+# --- ZOSTÁVA: pruh pod záložkami (koľko dávok dopražiť a koľko sáčkov zabaliť) ---
+UPRAZENA_NA_DAVKU = KAPACITA_ZELENA_BATCH * (1 - STANDARDNY_VYPEK / 100.0)   # 5 kg zelenej -> 4 kg praženej
+
+def plan_davok_podla_zrna():
+    """Plán dávok po zelených zrnách z aktívnych objednávok (rovnaký výpočet ako v Pražiarni)."""
+    potreba = {}
+    for o in st.session_state.aktualne_objednavky:
+        if o.get('❌ Zmazať') == True or o.get("Káva") not in kavy_recepty: continue
+        if o.get("Sudy") == True:
+            zelena = float(o["Kusy"]) * KAPACITA_ZELENA_BATCH
+        else:
+            zelena = (float(o["Kusy"]) * float(o["Gramáž"]) / 1000.0) / (1 - STANDARDNY_VYPEK / 100.0)
+        for zrno, podiel in kavy_recepty[o["Káva"]]["recept"].items():
+            potreba[zrno] = potreba.get(zrno, 0) + zelena * podiel
+    return {z: math.ceil(round(kg, 4) / KAPACITA_ZELENA_BATCH) for z, kg in potreba.items()}
+
+def zostava_pruh():
+    objednavky = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True]
+    if not objednavky:
+        return
+    # Pražiareň – po zrnách v dávkach
+    praz = []
+    for zrno, plan in sorted(plan_davok_podla_zrna().items()):
+        hotovo = int(st.session_state.priebeh_prazenia.get(zrno, {}).get("davky_hotovo", 0))
+        zost = max(0, plan - hotovo)
+        if zost: praz.append(f"<b>{zrno}</b> {zost} {'dávka' if zost == 1 else ('dávky' if zost < 5 else 'dávok')} ({zost * UPRAZENA_NA_DAVKU:g} kg)")
+    spolu_d = sum(int(x.split('</b> ')[1].split(' ')[0]) for x in praz) if praz else 0
+    # Baliareň – len obaly podľa gramáže
+    obaly = {g: 0 for g in gramaze_list}
+    for o in objednavky:
+        if o.get("Sudy") or o.get("Potvrdene"): continue
+        g = int(o.get("Gramáž", 0))
+        if g in obaly: obaly[g] += max(0, int(o.get("Kusy", 0)) - int(o.get("Zabalené (ks)", 0)))
+    bal = [f"<b>{g} g × {n}</b>" for g, n in obaly.items() if n]
+
+    riadok_p = ("🔥 <b>Zostáva dopražiť:</b> " + " · ".join(praz) + f" &nbsp;=&nbsp; <b>{spolu_d} {'dávka' if spolu_d == 1 else ('dávky' if spolu_d < 5 else 'dávok')} spolu</b>") if praz else "🔥 <b>Pražiareň:</b> ✅ všetko dopražené"
+    riadok_b = ("📦 <b>Zostáva zabaliť:</b> " + " · ".join(bal)) if bal else "📦 <b>Baliareň:</b> ✅ všetko zabalené"
+    st.markdown(
+        "<div style='background:rgba(43,80,152,0.07);border-left:4px solid #2B5098;border-radius:6px;"
+        "padding:8px 14px;margin:0 0 12px 0;line-height:1.7;font-size:0.98rem;'>"
+        f"{riadok_p}<br>{riadok_b}</div>", unsafe_allow_html=True)
+
 with tab1:
+    zostava_pruh()
     st.info(st.session_state.info_cloud)
 
     col_load, col_save = st.columns(2)
@@ -1202,6 +1245,7 @@ with tab1:
 # TAB 2: PRAŽIAREŇ (Zapisuje pevne do Skladu)
 # ========================================================
 with tab2:
+    zostava_pruh()
     st.markdown("### Panel pri stroji")
     
     aktivne_objednavky = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True]
@@ -1218,7 +1262,7 @@ with tab2:
         st.info("Plán praženia je prázdny. Začni pridaním objednávok.")
     else:
         for zrno, teoreticka_vaha_zelena in potreba_zelenej_podla_zrna.items():
-            davky_plan = math.ceil(teoreticka_vaha_zelena / KAPACITA_ZELENA_BATCH)
+            davky_plan = math.ceil(round(teoreticka_vaha_zelena, 4) / KAPACITA_ZELENA_BATCH)
             stav_z_cloudu = st.session_state.priebeh_prazenia.get(zrno, {"davky_hotovo": 0, "zelena_real": 0.0, "uprazena_real": 0.0, "hotovo": False})
             
             davky_hotovo = stav_z_cloudu.get("davky_hotovo", 0)
@@ -1285,6 +1329,7 @@ with tab2:
 # TAB 3: BALENIE (ČISTÁ VÝROBA, zapisuje pevne do Skladu)
 # ========================================================
 with tab3:
+    zostava_pruh()
     st.markdown("### Baliareň")
     
     aktivne_balenie = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True and not o.get('Sudy', False)]
@@ -1498,6 +1543,7 @@ def inventura_editor(typ, jednotka, akcia, odomknute):
             st.rerun()
 
 with tab4:
+    zostava_pruh()
     hs1, hs2, hs3 = st.columns([3, 1.3, 1.3], vertical_alignment="bottom")
     with hs1:
         st.markdown("### Sklad")
@@ -1677,6 +1723,7 @@ with tab4:
 # TAB 5: EXPEDÍCIA (LOGISTIKA)
 # ========================================================
 with tab5:
+    zostava_pruh()
     aktivne = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True and not o.get('Sudy', False)]
     cakajuce_expedicia = [o for o in aktivne if not o.get('Potvrdene')]
     hotove_expedicia = [o for o in aktivne if o.get('Potvrdene')]
