@@ -6,7 +6,14 @@ import os
 import hmac
 import copy
 import time
-from datetime import datetime, timedelta
+from datetime import datetime as _dt, timedelta
+from zoneinfo import ZoneInfo
+
+class datetime(_dt):
+    """datetime.now() vždy v slovenskom čase (server Streamlitu beží v UTC)."""
+    @classmethod
+    def now(cls, tz=None):
+        return _dt.now(tz or ZoneInfo("Europe/Bratislava")).replace(tzinfo=None)
 import json
 
 # --- NASTAVENIE STRÁNKY ---
@@ -89,7 +96,7 @@ NAZOV_TABULKY_ZALOHA = "Kikiriki_Zaloha_PRO"
 NAZOV_LISTU_STAV = "Stav"
 NAZOV_LISTU_HISTORIA = "Historia"
 VELKOST_KUSKU = 40000
-MAX_ZAZNAMOV_HISTORIE = 100
+MAX_ZAZNAMOV_HISTORIE = 300
 
 # Log: jeden riadok za každú zmenu skladu / akciu
 NAZOV_LISTU_LOG = "Log"
@@ -304,11 +311,12 @@ def nacitaj_z_google_sheets():
     except Exception as e:
         return None, str(e), None
 
-def uloz_snapshot_historie(spreadsheet, cas, nazov, kusky):
-    ws_h = ziskaj_list(spreadsheet, NAZOV_LISTU_HISTORIA, riadky=MAX_ZAZNAMOV_HISTORIE + 20, stlpce=max(10, len(kusky) + 3))
-    if ws_h.col_count < len(kusky) + 2:
-        ws_h.resize(cols=len(kusky) + 2)
-    ws_h.append_row([cas, nazov] + kusky, value_input_option="RAW")
+def uloz_snapshot_historie(spreadsheet, cas, nazov, kusky, akcia=""):
+    ws_h = ziskaj_list(spreadsheet, NAZOV_LISTU_HISTORIA, riadky=MAX_ZAZNAMOV_HISTORIE + 20, stlpce=max(10, len(kusky) + 4))
+    if ws_h.col_count < len(kusky) + 3:
+        ws_h.resize(cols=len(kusky) + 3)
+    # 3. stĺpec: "#A:<akcia>" – popis, po akej akcii vznikla záloha (JSON nikdy nezačína "#A:")
+    ws_h.append_row([cas, nazov, "#A:" + str(akcia)[:300]] + kusky, value_input_option="RAW")
     pocet = len(ws_h.col_values(1))
     if pocet > MAX_ZAZNAMOV_HISTORIE:
         ws_h.delete_rows(1, pocet - MAX_ZAZNAMOV_HISTORIE)
@@ -502,7 +510,10 @@ def nacitaj_historiu():
     zaznamy = []
     for r in ws.get_all_values():
         if len(r) < 3 or not r[0]: continue
-        zaznamy.append({"cas": r[0], "nazov": r[1], "data": "".join(r[2:])})
+        if r[2].startswith("#A:"):
+            zaznamy.append({"cas": r[0], "nazov": r[1], "akcia": r[2][3:], "data": "".join(r[3:])})
+        else:
+            zaznamy.append({"cas": r[0], "nazov": r[1], "akcia": "", "data": "".join(r[2:])})
     zaznamy.reverse()
     return zaznamy
 
@@ -538,7 +549,7 @@ def je_duplicitny_klik(kluc, hodnota, okno_s=2.0):
 def popis_obj(o):
     return f"{o.get('Odberateľ','')}: {o.get('Kusy',0)}× {o.get('Káva','')} {o.get('Gramáž','')}g"
 
-def uloz_do_google_sheets(data_dict, nazov_prazenia, historia=False, log=None):
+def uloz_do_google_sheets(data_dict, nazov_prazenia, historia=False, log=None, popis_zalohy=""):
     cas_ulozenia = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
     spreadsheet = None
     try:
@@ -557,7 +568,7 @@ def uloz_do_google_sheets(data_dict, nazov_prazenia, historia=False, log=None):
         ws.update(range_name="A1:A3", values=[[cas_ulozenia], [str(nazov_prazenia)], [str(len(kusky))]], value_input_option="RAW")
 
         if historia:
-            uloz_snapshot_historie(spreadsheet, cas_ulozenia, str(nazov_prazenia), kusky)
+            uloz_snapshot_historie(spreadsheet, cas_ulozenia, str(nazov_prazenia), kusky, popis_zalohy)
     except Exception as e:
         chyba = str(e)
         if "200" not in chyba:
@@ -583,7 +594,10 @@ def auto_uloz(historia=False, akcia=None, detail="", sklad_pred=None):
         "expedicia": st.session_state.get("expedicia_rozpracovane", {})
     }
     log = (akcia, detail, sklad_pred) if akcia else None
-    uspech, chyba = uloz_do_google_sheets(data_na_ulozenie, aktualny_nazov, historia=historia, log=log)
+    # Každá zapísaná akcia vytvorí aj zálohu v Obnove -> dá sa vrátiť ku ktorémukoľvek kroku
+    if akcia: historia = True
+    popis = f"{akcia}: {detail}" if akcia and detail else (akcia or "Ručné uloženie")
+    uspech, chyba = uloz_do_google_sheets(data_na_ulozenie, aktualny_nazov, historia=historia, log=log, popis_zalohy=popis[:300])
     if not uspech: st.toast(f"⚠️ Zlyhalo ukladanie: {chyba}", icon="❌")
     elif chyba: st.toast(f"⚠️ {chyba}", icon="⚠️")
 
@@ -913,7 +927,8 @@ def spravca_dialog():
                                    file_name=f"Kikiriki_Log_{DNESNY_DATUM}.csv", mime="text/csv")
 
     with tab_obnova:
-        st.caption("Vráti appku do stavu z vybraného snapshotu. Aktuálny stav sa pred obnovou automaticky uloží do histórie, takže obnova sa dá vrátiť.")
+        st.caption("Záloha vzniká po každej akcii a ukazuje stav PO nej. Ak chceš zrušiť posledné 2 objednávky, "
+                   "vyber zálohu tesne pred nimi. Aktuálny stav sa pred obnovou uloží, takže obnova sa dá vrátiť.")
         msg = st.session_state.pop("msg_obnova", None)
         if msg:
             (st.success if msg[0] == "success" else st.error)(msg[1])
@@ -925,7 +940,7 @@ def spravca_dialog():
         zoznam = st.session_state.get("historia_zoznam", [])
         if zoznam:
             idx = st.selectbox("Vyber snapshot:", options=list(range(len(zoznam))),
-                               format_func=lambda i: f"{zoznam[i]['cas']} | {zoznam[i]['nazov']}", key="vyber_zalohy")
+                               format_func=lambda i: f"{zoznam[i]['cas']} | {(zoznam[i].get('akcia') or zoznam[i]['nazov'])[:90]}", key="vyber_zalohy")
             try:
                 nahlad = json.loads(zoznam[idx]["data"])
                 obj = nahlad.get("objednavky", []) if isinstance(nahlad, dict) else nahlad
@@ -956,7 +971,7 @@ def logo_html():
 col_head_left, col_head_lock, col_head_logo = st.columns([14, 1, 2], vertical_alignment="center")
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 10.7 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 11.0 | Výroba, Sklad & ERP Kódy")
 with col_head_lock:
     ikona = "🔓" if st.session_state.get("admin_odomknute", False) else "🔒"
     if st.button(ikona, key="btn_zamok", help="Inventúra, log a obnova"):
@@ -973,8 +988,8 @@ st.text_input("Identifikátor praženia:", key="nazov_prazenia", on_change=auto_
 # ========================================================
 # 🚀 ZÁLOŽKY
 # ========================================================
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "**OBJEDNÁVKY**", "**PRAŽIAREŇ**", "**BALENIE**", "**SKLAD**", "**EXPED.**", "**ÚČTOVNÍCTVO**"
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "**OBJEDNÁVKY**", "**PRAŽIAREŇ**", "**BALENIE**", "**SKLAD**", "**EXPED.**", "**ÚČTOVNÍCTVO**", "**ŠTATISTIKY**"
 ])
 
 # ========================================================
@@ -983,18 +998,32 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 # --- ZOSTÁVA: pruh pod záložkami (koľko dávok dopražiť a koľko sáčkov zabaliť) ---
 UPRAZENA_NA_DAVKU = KAPACITA_ZELENA_BATCH * (1 - STANDARDNY_VYPEK / 100.0)   # 5 kg zelenej -> 4 kg praženej
 
-def plan_davok_podla_zrna():
-    """Plán dávok po zelených zrnách z aktívnych objednávok (rovnaký výpočet ako v Pražiarni)."""
+def vypocet_planu_prazenia():
+    """Jednotný plán praženia (pruh, Pražiareň aj Excel):
+    potreba = ešte NEZABALENÉ sáčky otvorených objednávok + skladové dávky, rozpočítané na zrná (blendy na zložky)
+    chýba   = potreba − to, čo už leží v dóze (RC)  → zostatky z minulého praženia sa započítajú automaticky
+    dávky   = chýba / 0,8 → kg zelenej → zaokrúhlené nahor na celé 5 kg dávky"""
     potreba = {}
     for o in st.session_state.aktualne_objednavky:
         if o.get('❌ Zmazať') == True or o.get("Káva") not in kavy_recepty: continue
         if o.get("Sudy") == True:
-            zelena = float(o["Kusy"]) * KAPACITA_ZELENA_BATCH
+            kg = float(o.get("Kusy", 0)) * UPRAZENA_NA_DAVKU
         else:
-            zelena = (float(o["Kusy"]) * float(o["Gramáž"]) / 1000.0) / (1 - STANDARDNY_VYPEK / 100.0)
+            if o.get("Potvrdene"): continue                      # odoslané = už zabalené
+            nezabalene = max(0, int(o.get("Kusy", 0)) - int(o.get("Zabalené (ks)", 0)))
+            kg = nezabalene * float(o.get("Gramáž", 0)) / 1000.0
+        if kg <= 0: continue
         for zrno, podiel in kavy_recepty[o["Káva"]]["recept"].items():
-            potreba[zrno] = potreba.get(zrno, 0) + zelena * podiel
-    return {z: math.ceil(round(kg, 4) / KAPACITA_ZELENA_BATCH) for z, kg in potreba.items()}
+            potreba[zrno] = potreba.get(zrno, 0) + kg * podiel
+    plan = {}
+    for zrno, kg in potreba.items():
+        v_doze = max(0.0, float(st.session_state.sklad["uprazena"].get(SKU_UPRAZENA.get(zrno), 0.0)))
+        chyba = max(0.0, kg - v_doze)
+        davky = math.ceil(round(chyba / (1 - STANDARDNY_VYPEK / 100.0), 4) / KAPACITA_ZELENA_BATCH) if chyba > 1e-9 else 0
+        plan[zrno] = {"potreba": kg, "v_doze": v_doze, "chyba": chyba, "davky": davky,
+                      "zelena": davky * KAPACITA_ZELENA_BATCH,
+                      "zostatok": v_doze + davky * UPRAZENA_NA_DAVKU - kg}
+    return plan
 
 def zostava_pruh():
     objednavky = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True]
@@ -1002,9 +1031,8 @@ def zostava_pruh():
         return
     # Pražiareň – po zrnách v dávkach
     praz = []
-    for zrno, plan in sorted(plan_davok_podla_zrna().items()):
-        hotovo = int(st.session_state.priebeh_prazenia.get(zrno, {}).get("davky_hotovo", 0))
-        zost = max(0, plan - hotovo)
+    for zrno, pl in sorted(vypocet_planu_prazenia().items()):
+        zost = pl["davky"]
         if zost: praz.append(f"<b>{zrno}</b> {zost} {'dávka' if zost == 1 else ('dávky' if zost < 5 else 'dávok')} ({zost * UPRAZENA_NA_DAVKU:g} kg)")
     spolu_d = sum(int(x.split('</b> ')[1].split(' ')[0]) for x in praz) if praz else 0
     # Baliareň – len obaly podľa gramáže
@@ -1180,7 +1208,7 @@ with tab1:
                 if st.button("Vyčistiť stôl (Nový víkend)", type="secondary"):
                     # Pred vyčistením uložiť snapshot do histórie
                     pocet = len(st.session_state.aktualne_objednavky)
-                    auto_uloz(historia=True)
+                    auto_uloz(akcia="Stav pred vyčistením stola", detail=f"{pocet} riadkov v knihe")
                     st.session_state.aktualne_objednavky = []
                     st.session_state.priebeh_prazenia = {}
                     st.session_state.expedicia_rozpracovane = {}
@@ -1222,24 +1250,98 @@ with tab1:
                             potreba_uprazenej_podla_zrna[zrno] = potreba_uprazenej_podla_zrna.get(zrno, 0) + (uprazena_kg * podiel)
 
                 finalny_plan = []
-                for zrno, teoreticka_vaha_zelena in potreba_zelenej_podla_zrna.items():
-                    uprazena_potreba = potreba_uprazenej_podla_zrna[zrno]
-                    davky = math.ceil(round(teoreticka_vaha_zelena, 4) / KAPACITA_ZELENA_BATCH)
-                    skutocna_zelena = davky * KAPACITA_ZELENA_BATCH
-                    zostatok_uprazena = (skutocna_zelena * (1 - (STANDARDNY_VYPEK / 100.0))) - uprazena_potreba
-                    finalny_plan.append({"Zelené zrno": zrno, "Upražiť (kg)": round(uprazena_potreba, 2), "Dávky": davky, "Zelená (kg)": skutocna_zelena, "Zostatok (kg)": round(zostatok_uprazena, 2)})
-                
+                for zrno, pl in sorted(vypocet_planu_prazenia().items()):
+                    finalny_plan.append({"Zelené zrno": zrno, "Treba na nezabalené (kg)": round(pl["potreba"], 2), "V dóze (kg)": round(pl["v_doze"], 2),
+                                         "Potrebné upražiť (kg)": round(pl["chyba"], 2), "Dávky (á 5kg)": pl["davky"],
+                                         "Navážiť zelenú (kg)": pl["zelena"], "Zostatok (kg upraž.)": round(pl["zostatok"], 2)})
+
                 df_plan = pd.DataFrame(finalny_plan)
                 st.dataframe(df_plan, use_container_width=True, hide_index=True)
-                
-                total_row_plan = {"Zelené zrno": "SPOLU:", "Upražiť (kg)": df_plan['Upražiť (kg)'].sum(), "Dávky": df_plan['Dávky'].sum(), "Zelená (kg)": df_plan['Zelená (kg)'].sum(), "Zostatok (kg)": ""}
+
+                celkovo_davok = int(df_plan['Dávky (á 5kg)'].sum())
+                celkova_zelena = float(df_plan['Navážiť zelenú (kg)'].sum())
+                celkova_uprazena = celkova_zelena * (1 - (STANDARDNY_VYPEK / 100.0))
+                st.markdown(f"### 🔥 Celkový počet pražení: **{celkovo_davok} dávok**")
+                st.markdown(f"### ⚖️ Spolu: **{celkova_zelena:.1f} kg** zelenej ➡️ **{celkova_uprazena:.1f} kg** upraženej (Plán)")
+                st.caption(f"Z dóz sa využije {df_plan['V dóze (kg)'].clip(upper=df_plan['Treba na nezabalené (kg)']).sum():.1f} kg už upraženej kávy.")
+
+                total_row_plan = {"Zelené zrno": "🔥 SPOLU:", "Treba na nezabalené (kg)": round(df_plan["Treba na nezabalené (kg)"].sum(), 2),
+                                  "V dóze (kg)": round(df_plan["V dóze (kg)"].sum(), 2), "Potrebné upražiť (kg)": round(df_plan["Potrebné upražiť (kg)"].sum(), 2),
+                                  "Dávky (á 5kg)": celkovo_davok, "Navážiť zelenú (kg)": round(celkova_zelena, 2), "Zostatok (kg upraž.)": ""}
                 df_plan_excel = pd.concat([df_plan, pd.DataFrame([total_row_plan])], ignore_index=True)
-                
+
+                # Plán skladania blendov
+                finalny_plan_blendov = []
+                for meno_blendu, celkova_vaha_blendu in potreba_skladania_blendov.items():
+                    for zrno, podiel in kavy_recepty[meno_blendu]["recept"].items():
+                        finalny_plan_blendov.append({"Názov blendu": meno_blendu, "Celková hmotnosť (kg)": round(celkova_vaha_blendu, 2),
+                                                     "Kávová zložka": zrno, "Podiel v blende": f"{int(round(podiel * 100))}%",
+                                                     "Hmotnosť zložky (kg)": round(celkova_vaha_blendu * podiel, 2)})
+                df_blendov = pd.DataFrame(finalny_plan_blendov)
+
+                # Sumár obalov (bez dávok do skladu)
+                obj_balenie = [o for o in aktivne_objednavky if not o.get('Sudy', False)]
+                if obj_balenie:
+                    df_sum_obalov = pd.DataFrame(obj_balenie).groupby(['Káva', 'Gramáž'])['Kusy'].sum().reset_index()
+                    sum_pivot_ex = df_sum_obalov.pivot(index='Káva', columns='Gramáž', values='Kusy').fillna(0).astype(int)
+                    for g in [220, 500, 1000]:
+                        if g not in sum_pivot_ex.columns: sum_pivot_ex[g] = 0
+                    sum_pivot_ex['Spolu etikiet'] = sum_pivot_ex[[220, 500, 1000]].sum(axis=1)
+                    sum_pivot_ex.loc['🔥 SPOLU SÁČKOV'] = sum_pivot_ex.sum(numeric_only=True)
+                    sum_pivot_ex = sum_pivot_ex[['Spolu etikiet', 220, 500, 1000]].reset_index()
+                    sum_pivot_ex.columns = ['Káva', 'Spolu etikiet', '220g', '500g', '1000g']
+                else:
+                    sum_pivot_ex = pd.DataFrame(columns=['Káva', 'Spolu etikiet', '220g', '500g', '1000g'])
+
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                    df_plan_excel.to_excel(writer, index=False, sheet_name='Plan_Prazenia')
-                    df_objednavky_export.drop(columns=['❌ Zmazať'], errors='ignore').to_excel(writer, index=False, sheet_name='Spracovane_Objednavky')
-                st.download_button("Stiahnuť Kikiriki Excel (.xlsx)", data=buffer.getvalue(), file_name=f"Kikiriki_PRO_{st.session_state.nazov_prazenia}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary", use_container_width=True)
+                    workbook = writer.book
+
+                    def write_styled_sheet(df, sheet_name, group_by_col=None):
+                        worksheet = workbook.add_worksheet(sheet_name)
+                        max_row, max_col = df.shape
+                        if max_row == 0: return
+                        worksheet.autofilter(0, 0, max_row, max_col - 1)
+                        worksheet.freeze_panes(1, 0)
+                        header_format = workbook.add_format({'bold': True, 'bg_color': '#4F81BD', 'font_color': 'white', 'border': 1})
+                        for col_num, value in enumerate(df.columns):
+                            worksheet.write(0, col_num, str(value), header_format)
+                            max_len = max(df[df.columns[col_num]].astype(str).map(len).max(), len(str(value))) + 2
+                            worksheet.set_column(col_num, col_num, max_len)
+                        format_z1 = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1})
+                        format_z2 = workbook.add_format({'bg_color': '#F2F2F2', 'border': 1})
+                        format_total = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1})
+                        format_b1 = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1})
+                        format_b2 = workbook.add_format({'bg_color': '#DCE6F1', 'border': 1})
+                        group_col_idx = list(df.columns).index(group_by_col) if group_by_col in df.columns else None
+                        use_f1, current_val = True, None
+                        for r_idx in range(max_row):
+                            is_total = str(df.iloc[r_idx, 0]).startswith('🔥')
+                            if group_col_idx is not None:
+                                val = df.iloc[r_idx, group_col_idx]
+                                if current_val is None: current_val = val
+                                elif val != current_val: current_val = val; use_f1 = not use_f1
+                                fmt = format_total if is_total else (format_b1 if use_f1 else format_b2)
+                            else:
+                                fmt = format_total if is_total else (format_z1 if r_idx % 2 == 0 else format_z2)
+                            for c_idx in range(max_col):
+                                cell_val = df.iloc[r_idx, c_idx]
+                                if pd.isna(cell_val) if not isinstance(cell_val, str) else False:
+                                    worksheet.write(r_idx + 1, c_idx, "", fmt)
+                                elif isinstance(cell_val, (int, float)) or hasattr(cell_val, "item"):
+                                    worksheet.write_number(r_idx + 1, c_idx, float(cell_val), fmt)
+                                else:
+                                    worksheet.write(r_idx + 1, c_idx, str(cell_val), fmt)
+
+                    write_styled_sheet(df_plan_excel, 'Plan_Prazenia')
+                    write_styled_sheet(df_objednavky_export.drop(columns=['❌ Zmazať'], errors='ignore'), 'Spracovane_Objednavky')
+                    if not df_blendov.empty:
+                        write_styled_sheet(df_blendov, 'Plan_Blendov', group_by_col='Názov blendu')
+                    write_styled_sheet(sum_pivot_ex, 'Sumar_Obalov')
+
+                st.download_button("💾 Stiahnuť profi Excel (plán, objednávky, blendy, obaly)", data=buffer.getvalue(),
+                                   file_name=f"KIKIRIKI_plan_{st.session_state.nazov_prazenia}.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary", use_container_width=True)
 
 # ========================================================
 # TAB 2: PRAŽIAREŇ (Zapisuje pevne do Skladu)
@@ -1248,44 +1350,36 @@ with tab2:
     zostava_pruh()
     st.markdown("### Panel pri stroji")
     
-    aktivne_objednavky = [o for o in st.session_state.aktualne_objednavky if o.get('❌ Zmazať') != True]
-    potreba_zelenej_podla_zrna = {}
-    
-    for o in aktivne_objednavky:
-        je_sud = o.get("Sudy") == True
-        zelena_kg_zaklad = o["Kusy"] * KAPACITA_ZELENA_BATCH if je_sud else (o["Kusy"] * o["Gramáž"] / 1000.0) / (1 - (STANDARDNY_VYPEK / 100.0))
-        if o["Káva"] in kavy_recepty:
-            for zrno, podiel in kavy_recepty[o["Káva"]]["recept"].items():
-                potreba_zelenej_podla_zrna[zrno] = potreba_zelenej_podla_zrna.get(zrno, 0) + (zelena_kg_zaklad * podiel)
+    st.caption("Plán už počíta s tým, čo je upražené v dózach (aj zo včera) – pražíš len to, čo naozaj chýba na nezabalené objednávky.")
+    plan_praz = vypocet_planu_prazenia()
 
-    if not potreba_zelenej_podla_zrna:
+    if not plan_praz:
         st.info("Plán praženia je prázdny. Začni pridaním objednávok.")
     else:
-        for zrno, teoreticka_vaha_zelena in potreba_zelenej_podla_zrna.items():
-            davky_plan = math.ceil(round(teoreticka_vaha_zelena, 4) / KAPACITA_ZELENA_BATCH)
+        for zrno, pl in sorted(plan_praz.items(), key=lambda x: (x[1]["davky"] == 0, x[0])):
             stav_z_cloudu = st.session_state.priebeh_prazenia.get(zrno, {"davky_hotovo": 0, "zelena_real": 0.0, "uprazena_real": 0.0, "hotovo": False})
-            
-            davky_hotovo = stav_z_cloudu.get("davky_hotovo", 0)
-            davky_zostava = max(0, davky_plan - davky_hotovo)
-            je_hotovo = davky_hotovo >= davky_plan
-            ma_navyse = davky_hotovo > davky_plan
-            
-            if ma_navyse: stav_text = "✅ ⬆️ Hotovo (Navyše)"
-            elif je_hotovo: stav_text = "✅ Hotovo"
+            davky_hotovo = int(stav_z_cloudu.get("davky_hotovo", 0))
+            davky_zostava = pl["davky"]
+            davky_plan = davky_zostava
+            je_hotovo = davky_zostava == 0
+
+            if je_hotovo: stav_text = "✅ V dóze je dosť"
             elif davky_hotovo > 0: stav_text = "🔄 Rozpracované"
             else: stav_text = "⏳ Na rade"
-                
-            with st.expander(f"{stav_text}: **{zrno}** ({davky_hotovo} / {davky_plan} dávok)", expanded=not je_hotovo):
+
+            nadpis = f"{stav_text}: **{zrno}** (" + ("hotovo" if je_hotovo else f"zostáva {davky_zostava} {'dávka' if davky_zostava == 1 else ('dávky' if davky_zostava < 5 else 'dávok')}") + ")"
+            with st.expander(nadpis, expanded=not je_hotovo):
                 col_info, col_input = st.columns([1, 1])
                 with col_info:
-                    st.markdown(f"**Cieľový plán:** {davky_plan} dávok")
-                    st.markdown(f"**Vyrobené na túto zmenu:** {davky_hotovo} dávok")
-                    if davky_zostava > 0: st.warning(f"**Zostáva dokončiť:** {davky_zostava} dávok")
-                    elif ma_navyse: st.info(f"**Odpražené o {davky_hotovo - davky_plan} dávok navyše.**")
-                    else: st.success("**Plán je splnený!**")
-                
+                    st.markdown(f"**Treba na nezabalené objednávky:** {pl['potreba']:.2f} kg praženej  \n"
+                                f"**V dóze už je:** {pl['v_doze']:.2f} kg  \n"
+                                f"**Chýba upražiť:** {pl['chyba']:.2f} kg  \n"
+                                f"**Upražené na túto zmenu:** {davky_hotovo} dávok")
+                    if davky_zostava > 0: st.warning(f"**Zostáva upražiť: {davky_zostava} dávok** ({pl['zelena']:g} kg zelenej). Po pražení ostane v dóze navyše {pl['zostatok']:.2f} kg.")
+                    else: st.success(f"**Dóza pokrýva objednávky.** Po zabalení ostane v dóze {pl['zostatok']:.2f} kg.")
+
                 with col_input:
-                    pridat_davky = st.number_input("Počet práve odpražených dávok:", min_value=1, value=davky_zostava if davky_zostava > 0 else 1, step=1, key=f"davky_{zrno}")
+                    pridat_davky = st.number_input("Počet práve odpražených dávok:", min_value=1, value=davky_zostava if davky_zostava > 0 else 1, step=1, key=f"davky_{zrno}_{davky_zostava}")
                     if st.button(f"Potvrdiť {pridat_davky} dávok do Skladu", key=f"btn_praz_{zrno}", type="primary") and not je_duplicitny_klik(f"praz_{zrno}", pridat_davky):
                         sklad_pred = copy.deepcopy(st.session_state.sklad)
                         nova_zelena = pridat_davky * KAPACITA_ZELENA_BATCH
@@ -1304,7 +1398,7 @@ with tab2:
                         if gc_sku: st.session_state.sklad["zelena"][gc_sku] -= nova_zelena
                         if rc_sku: st.session_state.sklad["uprazena"][rc_sku] += nova_uprazena
 
-                        auto_uloz(akcia="Praženie", detail=f"{zrno}: +{pridat_davky} dávok ({davky_hotovo + pridat_davky}/{davky_plan})", sklad_pred=sklad_pred)
+                        auto_uloz(akcia="Praženie", detail=f"{zrno}: +{pridat_davky} dávok (pred pražením chýbalo {davky_plan})", sklad_pred=sklad_pred)
                         st.rerun()
 
                     if davky_hotovo > 0:
@@ -2265,3 +2359,114 @@ with tab6:
                     st.download_button("⚙️ Stiahnuť vybraný TXT pre KROS Omegu", data=vybrany[2].encode('windows-1250', errors='replace'),
                                        file_name=f"Kikiriki_Omega_{vybrany[0][:10].replace('.', '')}_{str(vybrany[1]).replace(' ', '_')}.txt",
                                        mime="text/plain", type="primary", use_container_width=True)
+
+
+# ========================================================
+# TAB 7: ŠTATISTIKY (automaticky z logu – praženie, balenie, expedícia)
+# ========================================================
+def statistiky_z_logu(df_log):
+    """Z logu vytiahne pohyby: praženie (GC−, RC+), balenie (PC+), expedícia (PC−). Vráti DataFrame pohybov."""
+    if df_log is None or df_log.empty or "SKU" not in df_log.columns:
+        return pd.DataFrame()
+    d = df_log[df_log["SKU"].astype(str).str.len() > 0].copy()
+    d["zmena"] = pd.to_numeric(d["Zmena"].astype(str).str.replace(",", "."), errors="coerce").fillna(0)
+    d["cas"] = pd.to_datetime(d["Čas"], format="%d.%m.%Y %H:%M:%S", errors="coerce")
+    d = d.dropna(subset=["cas"])
+    d["mesiac"] = d["cas"].dt.to_period("M")
+    d["den"] = d["cas"].dt.date
+    akc = d["Akcia"].astype(str)
+    sku = d["SKU"].astype(str)
+    d["druh"] = None
+    d.loc[akc.str.startswith(("Praženie", "Storno praženia")) & sku.str.startswith("GC"), "druh"] = "zelena"
+    d.loc[akc.str.startswith(("Praženie", "Storno praženia")) & sku.str.startswith("RC"), "druh"] = "uprazena"
+    d.loc[akc.str.startswith("Balenie") & sku.str.startswith("PC"), "druh"] = "zabalene"
+    d.loc[akc.str.contains("xpedíc", regex=False) & sku.str.startswith("PC"), "druh"] = "expedovane"
+    d = d[d["druh"].notna()].copy()
+    d["gramaz"] = d["SKU"].map(lambda x: gramaz_z_pc(x) if str(x).startswith("PC") else 0)
+    d["nazov"] = [n if n else s_ for n, s_ in zip(d["Názov"].astype(str), d["SKU"])]
+    return d
+
+with tab7:
+    st.markdown("### Štatistiky")
+    st.caption("Počítané automaticky z logu – pražené dávky, zabalené sáčky a expedícia. Bez ručného zadávania.")
+    if st.button("🔄 Načítať štatistiky z cloudu", type="primary", key="btn_stat"):
+        try:
+            st.session_state.stat_df = statistiky_z_logu(nacitaj_log())
+        except Exception as e:
+            st.session_state.stat_df = None
+            st.error(f"Log sa nepodarilo načítať: {e}")
+
+    d = st.session_state.get("stat_df")
+    if d is not None and d.empty:
+        st.info("V logu zatiaľ nie sú žiadne praženia, balenia ani expedície.")
+    elif d is not None:
+        mesiace = sorted(d["mesiac"].unique(), reverse=True)
+        moznosti_obd = ["Všetko"] + [m.strftime("%m / %Y") for m in mesiace]
+        obd = st.selectbox("Obdobie:", moznosti_obd, key="stat_obdobie")
+        dv = d if obd == "Všetko" else d[d["mesiac"].map(lambda m: m.strftime("%m / %Y")) == obd]
+
+        zel = -dv.loc[dv["druh"] == "zelena", "zmena"].sum()
+        upr = dv.loc[dv["druh"] == "uprazena", "zmena"].sum()
+        zab = dv[dv["druh"] == "zabalene"]; exp_ = dv[dv["druh"] == "expedovane"]
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("Upražených dávok", f"{zel / KAPACITA_ZELENA_BATCH:.0f}")
+        k2.metric("Zelenej spotrebované", f"{zel:.1f} kg")
+        k3.metric("Upraženej", f"{upr:.1f} kg")
+        k4.metric("Zabalených sáčkov", int(zab["zmena"].sum()))
+        k5.metric("Expedovaných sáčkov", int(-exp_["zmena"].sum()))
+
+        # Súhrn po mesiacoch
+        def suhrn(skupina):
+            g = d.groupby(skupina)
+            out = pd.DataFrame({
+                "Dávky": g.apply(lambda x: -x.loc[x["druh"] == "zelena", "zmena"].sum() / KAPACITA_ZELENA_BATCH),
+                "Zelená (kg)": g.apply(lambda x: -x.loc[x["druh"] == "zelena", "zmena"].sum()),
+                "Upražená (kg)": g.apply(lambda x: x.loc[x["druh"] == "uprazena", "zmena"].sum()),
+                "Zabalené (ks)": g.apply(lambda x: x.loc[x["druh"] == "zabalene", "zmena"].sum()),
+                "Zabalené (kg)": g.apply(lambda x: (x.loc[x["druh"] == "zabalene", "zmena"] * x.loc[x["druh"] == "zabalene", "gramaz"]).sum() / 1000),
+                "Expedované (ks)": g.apply(lambda x: -x.loc[x["druh"] == "expedovane", "zmena"].sum()),
+            }).round(2)
+            return out
+        st.markdown("#### 📅 Súhrn po mesiacoch")
+        sm = suhrn("mesiac").sort_index(ascending=False)
+        sm.index = [m.strftime("%m / %Y") for m in sm.index]; sm.index.name = "Mesiac"
+        st.dataframe(sm, use_container_width=True)
+
+        st.markdown(f"#### 🔥 Praženie po zrnách ({obd})")
+        pz = dv[dv["druh"] == "zelena"].groupby("nazov")["zmena"].sum().mul(-1)
+        if pz.empty:
+            st.caption("V tomto období sa nepražilo.")
+        else:
+            df_pz = pd.DataFrame({"Zelená (kg)": pz.round(1), "Dávky": (pz / KAPACITA_ZELENA_BATCH).round(1)}).sort_values("Zelená (kg)", ascending=False)
+            df_pz.index.name = "Zrno"
+            c_a, c_b = st.columns([1, 1])
+            c_a.dataframe(df_pz, use_container_width=True)
+            c_b.bar_chart(df_pz["Dávky"], horizontal=True, height=max(220, 32 * len(df_pz)))
+
+        st.markdown(f"#### 📦 Zabalené po výrobkoch ({obd})")
+        if zab.empty:
+            st.caption("V tomto období sa nebalilo.")
+        else:
+            df_zab = zab.groupby(["nazov", "gramaz"])["zmena"].sum().reset_index()
+            piv = df_zab.pivot(index="nazov", columns="gramaz", values="zmena").fillna(0).astype(int)
+            for g_ in gramaze_list:
+                if g_ not in piv.columns: piv[g_] = 0
+            piv = piv[gramaze_list]; piv.columns = [f"{g_} g" for g_ in gramaze_list]
+            piv["Spolu (ks)"] = piv.sum(axis=1)
+            piv.index = [str(i).rsplit(" ", 1)[0] for i in piv.index]; piv = piv.groupby(level=0).sum()
+            piv.index.name = "Káva"
+            st.dataframe(piv.sort_values("Spolu (ks)", ascending=False), use_container_width=True)
+
+        st.markdown("#### 📈 Praženie po dňoch")
+        dni = d[d["druh"] == "zelena"].groupby("den")["zmena"].sum().mul(-1 / KAPACITA_ZELENA_BATCH)
+        if not dni.empty:
+            st.bar_chart(dni.rename("Dávky"), height=220)
+
+        buf_s = io.BytesIO()
+        with pd.ExcelWriter(buf_s, engine="xlsxwriter") as writer:
+            _zapis_harok(writer, sm.reset_index(), "Súhrn po mesiacoch")
+            if not pz.empty: _zapis_harok(writer, df_pz.reset_index(), "Praženie po zrnách")
+            if not zab.empty: _zapis_harok(writer, piv.reset_index(), "Zabalené")
+            _zapis_harok(writer, d[["Čas", "Akcia", "Detail", "SKU", "nazov", "zmena"]].rename(columns={"nazov": "Názov", "zmena": "Zmena"}), "Pohyby")
+        st.download_button("💾 Stiahnuť štatistiky (.xlsx)", data=buf_s.getvalue(), file_name=f"Kikiriki_Statistiky_{DNESNY_DATUM}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
