@@ -971,7 +971,7 @@ def logo_html():
 col_head_left, col_head_lock, col_head_logo = st.columns([14, 1, 2], vertical_alignment="center")
 with col_head_left:
     st.title("Kikiriki Roastery PRO")
-    st.caption("Verzia 11.6 | Výroba, Sklad & ERP Kódy")
+    st.caption("Verzia 11.9 | Výroba, Sklad & ERP Kódy")
 with col_head_lock:
     ikona = "🔓" if st.session_state.get("admin_odomknute", False) else "🔒"
     if st.button(ikona, key="btn_zamok", help="Inventúra, log a obnova"):
@@ -995,6 +995,16 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
 # ========================================================
 # TAB 1: OBJEDNÁVKY
 # ========================================================
+def excel_na_poziadanie(popis, generator, nazov_suboru, kluc, **kw):
+    """Excel sa vytvorí až po kliknutí (nie pri každom prekreslení stránky – appka je tak rýchlejšia)."""
+    if st.button(popis, key=f"{kluc}_priprav", **kw):
+        st.session_state[kluc] = (generator(), nazov_suboru)
+    if st.session_state.get(kluc):
+        data_x, meno_x = st.session_state[kluc]
+        st.download_button("⬇️ Stiahnuť", data=data_x, file_name=meno_x, key=f"{kluc}_dl", type="primary",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+                           on_click=lambda: st.session_state.pop(kluc, None))
+
 def stabilny_selectbox(label, options, state_key, format_func=str, v_adrese=False, **kw):
     """Roletka, ktorá si pamätá výber, aj keď sa jej popisky menia (napr. „zostáva 12 ks“ → „zostáva 6 ks“).
     Streamlit by inak pri zmene popisiek vytvoril novú roletku a výber by skočil na prvú položku."""
@@ -1155,9 +1165,9 @@ with tab1:
         st.caption("Uloží všetko presne tak, ako to teraz je. Keď ho neskôr načítaš, pokračuješ tam, kde si skončil.")
         cx1, cx2 = st.columns(2)
         with cx1:
-            st.download_button("💾 Stiahnuť kompletný stav (.xlsx)", data=vytvor_excel_stavu(),
-                               file_name=f"Kikiriki_STAV_{st.session_state.nazov_prazenia}_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary", use_container_width=True)
+            excel_na_poziadanie("💾 Pripraviť kompletný stav (.xlsx)", vytvor_excel_stavu,
+                                f"Kikiriki_STAV_{st.session_state.nazov_prazenia}_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
+                                "xls_zaloha", use_container_width=True)
         with cx2:
             st.file_uploader("Načítať stav zo zálohy:", type=["xlsx"], key="upl_stav_excel")
             st.button("📂 Obnoviť appku z tohto súboru", use_container_width=True, on_click=nacitaj_stav_z_excelu_callback,
@@ -1643,7 +1653,10 @@ with tab3:
 
         def popis_zakaznika(z):
             if z == VSETCI: return VSETCI
-            return f"✅ {z} – nabalené" if zostava_zak[z] == 0 else f"{z} – zostáva {zostava_zak[z]} ks"
+            if zostava_zak[z] == 0: return f"✅ {z} – nabalené"
+            pol = len({(o['Káva'], o['Gramáž']) for o in aktivne_balenie if o['Odberateľ'] == z and not o.get('Potvrdene')
+                       and int(o['Kusy']) > int(o.get('Zabalené (ks)', 0))})
+            return f"{z} – zostáva spolu {zostava_zak[z]} ks ({pol} {'položka' if pol == 1 else ('položky' if pol < 5 else 'položiek')})"
 
         col_ul, col_zak = st.columns([3, 2], vertical_alignment="bottom")
         with col_ul:
@@ -1652,7 +1665,13 @@ with tab3:
             vybrany_zak = stabilny_selectbox("Balím pre:", moznosti_zak, "balenie_zakaznik", format_func=popis_zakaznika, v_adrese=True)
 
         msg_bal = st.session_state.pop("msg_balenie", None)
-        if msg_bal: st.info(msg_bal)
+        if msg_bal: st.success(msg_bal)
+        msg_bal_ch = st.session_state.pop("msg_balenie_chyba", None)
+        if msg_bal_ch: st.error(msg_bal_ch)
+        if vybrany_zak == VSETCI:
+            st.caption("👥 Počty nižšie sú **za všetkých zákazníkov spolu**. Ak bališ pre konkrétneho, vyber ho vpravo.")
+        else:
+            st.markdown(f"<div style='font-size:1.05rem;'>👤 Balíš <b>len pre: {vybrany_zak}</b> – počty nižšie sú len jeho.</div>", unsafe_allow_html=True)
 
         if vybrany_zak == VSETCI:
             plan_ulohy = plan_balenia
@@ -1670,30 +1689,33 @@ with tab3:
                 st.success(f"✅ {vybrany_zak} je kompletne nabalený – môžeš ho expedovať.")
 
         def pridaj_sacky(k, g, pridavam, prednost=None):
-            """Zapíše presne `pridavam` sáčkov. Najprv pokryje objednávky zákazníka `prednost`,
-            potom ostatných. Vráti počet kusov navyše nad otvorené objednávky."""
+            """Zapíše presne `pridavam` sáčkov. Pri vybranom zákazníkovi (`prednost`) idú LEN jemu,
+            inak postupne na otvorené objednávky. Vráti (navyše, rozdelenie {zákazník: ks})."""
             sklad_pred = copy.deepcopy(st.session_state.sklad)
             zvysok = pridavam
+            rozdelenie = {}
             objednavky = st.session_state.aktualne_objednavky
-            poradie = sorted(range(len(objednavky)), key=lambda i: 0 if (prednost and objednavky[i].get('Odberateľ') == prednost) else 1)
-            for idx_o in poradie:
+            for idx_o in range(len(objednavky)):
                 obj = objednavky[idx_o]
                 if zvysok <= 0: break
                 if obj.get('❌ Zmazať') or obj.get('Sudy') or obj.get('Potvrdene'): continue
+                if prednost and obj.get('Odberateľ') != prednost: continue
                 if obj['Káva'] == k and obj['Gramáž'] == g:
                     aktualne_v_obj = int(obj.get('Zabalené (ks)', 0))
                     potreba_v_obj = int(obj['Kusy']) - aktualne_v_obj
                     if potreba_v_obj > 0:
                         dam = min(zvysok, potreba_v_obj)
                         st.session_state.aktualne_objednavky[idx_o]['Zabalené (ks)'] = aktualne_v_obj + dam
+                        rozdelenie[obj['Odberateľ']] = rozdelenie.get(obj['Odberateľ'], 0) + dam
                         zvysok -= dam
 
             # ZÁPIS DO PEVNÉHO SKLADU
             pc_sku = zapis_balenia_do_skladu(k, g, pridavam)
 
-            detail = f"{k} {g}g: +{pridavam} ks ({pc_sku})" + (f" pre {prednost}" if prednost else "") + (f", z toho {zvysok} ks navyše" if zvysok > 0 else "")
+            detail = (f"{k} {g}g: +{pridavam} ks ({pc_sku}) → " + ", ".join(f"{z} {n}" for z, n in rozdelenie.items())
+                      + (f", {zvysok} ks navyše do regálu" if zvysok > 0 else ""))
             auto_uloz(akcia="Balenie", detail=detail, sklad_pred=sklad_pred)
-            return zvysok
+            return zvysok, rozdelenie
 
         kavy_na_balenie = sorted(list(set([v['kava'] for v in plan_ulohy.values()])))
         
@@ -1735,15 +1757,25 @@ with tab3:
                     with col2:
                         if chýba_ks > 0:
                             with st.form(key=f"form_bag_{p['kava']}_{p['gramaz']}", clear_on_submit=True):
-                                pocet_ks = st.number_input("Počet sáčkov (ks):", min_value=0, value=0, step=1, key=f"add_bag_{p['kava']}_{p['gramaz']}")
+                                pocet_ks = st.number_input("Počet sáčkov (ks):", min_value=0, value=0, step=1,
+                                                           key=f"add_bag_{p['kava']}_{p['gramaz']}",
+                                                           help=f"Najviac {chýba_ks} ks – toľko chýba {'pre ' + prednost if prednost else 'na všetky objednávky'}. Navyše bal cez ✋ Ručné balenie.")
                                 odoslat = st.form_submit_button("✅ Potvrdiť", use_container_width=True)
-                            if odoslat and pocet_ks > 0:
+                            if odoslat and pocet_ks > chýba_ks:
+                                st.session_state.msg_balenie_chyba = (
+                                    f"⚠️ Nič som nezapísal: zadal si {int(pocet_ks)} ks {p['kava']} {p['gramaz']} g, ale "
+                                    + (f"pre **{prednost}**" if prednost else "na všetky objednávky") + f" chýba len **{chýba_ks} ks**. "
+                                    "Zobrazenie sa medzitým prepočítalo (napr. po výbere zákazníka) – skontroluj a zadaj znova. "
+                                    "Viac kusov zabalíš cez ✋ Ručné balenie.")
+                                st.rerun()
+                            elif odoslat and pocet_ks > 0:
                                 if je_duplicitny_klik(f"bag_{p['kava']}_{p['gramaz']}", int(pocet_ks)):
                                     st.warning("Dvojklik zachytený – započítané len raz.")
                                 else:
-                                    navyse = pridaj_sacky(p['kava'], p['gramaz'], int(pocet_ks), prednost=prednost)
-                                    if navyse > 0:
-                                        st.session_state.msg_balenie = f"{navyse} ks navyše nad objednávky išlo do regálu ako voľný sklad."
+                                    navyse, rozdel = pridaj_sacky(p['kava'], p['gramaz'], int(pocet_ks), prednost=prednost)
+                                    st.session_state.msg_balenie = (f"✅ {int(pocet_ks)}× {p['kava']} {p['gramaz']} g → "
+                                                                    + ", ".join(f"**{z}** {n} ks" for z, n in rozdel.items())
+                                                                    + (f" · {navyse} ks navyše do regálu" if navyse else ""))
                                     st.rerun()
 
 # ========================================================
@@ -1785,10 +1817,9 @@ with tab4:
     with hs1:
         st.markdown("### Sklad")
     with hs2:
-        st.download_button("📊 Stav skladu (.xlsx)", data=excel_stav_skladu(),
-                           file_name=f"Kikiriki_Stav_skladu_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
-                           help="Aktuálny stav – každý sklad na samostatnom hárku (GC, RC, Zabalená-PC, Obaly, Samolepky)")
+        excel_na_poziadanie("📊 Stav skladu (.xlsx)", excel_stav_skladu,
+                            f"Kikiriki_Stav_skladu_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx", "xls_stav_skladu",
+                            use_container_width=True, help="Aktuálny stav – každý sklad na samostatnom hárku (GC, RC, Zabalená-PC, Obaly, Samolepky)")
     with hs3:
         if st.button("📒 Skladové karty", use_container_width=True, help="Všetky pohyby po kartách s príjmom, výdajom a zostatkom"):
             st.session_state.karty_otvorene = True
@@ -1839,6 +1870,11 @@ with tab4:
         c1, c2 = st.columns(2)
         c1.metric("Zelená spolu", f"{df_gc['Stav (kg)'].sum():.2f} kg")
         c2.metric("Druhov na sklade", int((df_gc["Stav (kg)"] > 0).sum()))
+        fx1, fx2 = st.columns([3, 1], vertical_alignment="bottom")
+        with fx1: f_t_gc = st.text_input("Hľadať:", key="gc_f_text", placeholder="kód, názov…")
+        with fx2: f_n_gc = st.toggle("Aj nulové", value=True, key="gc_aj_nulove")
+        if f_t_gc: df_gc = df_gc[df_gc.apply(lambda r_: f_t_gc.lower() in " ".join(map(str, r_.values)).lower(), axis=1)]
+        if not f_n_gc: df_gc = df_gc[df_gc["Stav (kg)"] != 0]
         st.dataframe(df_gc.style.map(zafarbi_zaporne, subset=["Stav (kg)"]).format({"Stav (kg)": "{:.2f}"}),
                      use_container_width=True, hide_index=True)
         inventura_editor("zelena", "kg", "GC Zelená", odomknute)
@@ -1851,6 +1887,11 @@ with tab4:
         c1, c2 = st.columns(2)
         c1.metric("V dózach spolu", f"{df_rc['Stav (kg)'].sum():.2f} kg")
         c2.metric("Plných dóz", int((df_rc["Stav (kg)"] > 0).sum()))
+        fx1, fx2 = st.columns([3, 1], vertical_alignment="bottom")
+        with fx1: f_t_rc = st.text_input("Hľadať:", key="rc_f_text", placeholder="kód, názov…")
+        with fx2: f_n_rc = st.toggle("Aj nulové", value=True, key="rc_aj_nulove")
+        if f_t_rc: df_rc = df_rc[df_rc.apply(lambda r_: f_t_rc.lower() in " ".join(map(str, r_.values)).lower(), axis=1)]
+        if not f_n_rc: df_rc = df_rc[df_rc["Stav (kg)"] != 0]
         st.dataframe(df_rc.style.map(zafarbi_zaporne, subset=["Stav (kg)"]).format({"Stav (kg)": "{:.2f}"}),
                      use_container_width=True, hide_index=True)
         inventura_editor("uprazena", "kg", "RC Dózy", odomknute)
@@ -1861,19 +1902,47 @@ with tab4:
         rows_pc = []
         for sku, ks in st.session_state.sklad["zabalena"].items():
             g = gramaz_z_pc(sku)
-            rows_pc.append({"SKU": sku, "Názov": NAZVY_ZABALENA.get(sku, ""), "Gramáž": g, "Stav (ks)": int(ks), "Váha (kg)": round(int(ks) * g / 1000.0, 2)})
+            kava_pc = PC_NA_KAVU.get(sku, (NAZVY_ZABALENA.get(sku, sku), g))[0]
+            rows_pc.append({"Káva": kava_pc, "Gramáž": g, "SKU": sku, "Stav (ks)": int(ks), "Váha (kg)": round(int(ks) * g / 1000.0, 2)})
         df_pc = pd.DataFrame(rows_pc)
+
+        # --- filtre ako v Exceli ---
+        fp1, fp2, fp3, fp4 = st.columns([2.2, 1.6, 1.6, 1.2], vertical_alignment="bottom")
+        with fp1: f_kava = st.multiselect("Káva:", sorted(df_pc["Káva"].unique()), key="pc_f_kava", placeholder="všetky")
+        with fp2: f_gram = st.multiselect("Gramáž:", gramaze_list, key="pc_f_gram", placeholder="všetky", format_func=lambda x: f"{x} g")
+        with fp3: f_text = st.text_input("Hľadať:", key="pc_f_text", placeholder="kód, názov…")
+        with fp4: aj_nulove = st.toggle("Aj nulové", value=False, key="pc_aj_nulove")
+        df_f = df_pc.copy()
+        if f_kava: df_f = df_f[df_f["Káva"].isin(f_kava)]
+        if f_gram: df_f = df_f[df_f["Gramáž"].isin(f_gram)]
+        if f_text: df_f = df_f[df_f.apply(lambda r_: f_text.lower() in " ".join(map(str, r_.values)).lower(), axis=1)]
+        if not aj_nulove: df_f = df_f[df_f["Stav (ks)"] != 0]
+
         c1, c2, c3 = st.columns(3)
-        c1.metric("Sáčkov spolu", int(df_pc["Stav (ks)"].sum()))
-        c2.metric("Váha spolu", f"{df_pc['Váha (kg)'].sum():.2f} kg")
-        c3.metric("Druhov na sklade", int((df_pc["Stav (ks)"] > 0).sum()))
-        aj_nulove = st.toggle("Zobraziť aj karty s nulovým stavom", value=False, key="pc_aj_nulove")
-        df_pc_view = df_pc if aj_nulove else df_pc[df_pc["Stav (ks)"] != 0]
-        if df_pc_view.empty:
-            st.info("Na sklade nie sú žiadne zabalené sáčky.")
+        c1.metric("Sáčkov (vo filtri)", int(df_f["Stav (ks)"].sum()))
+        c2.metric("Váha (vo filtri)", f"{df_f['Váha (kg)'].sum():.2f} kg")
+        c3.metric("Druhov", int((df_f["Stav (ks)"] != 0).sum()))
+
+        if df_f.empty:
+            st.info("Pre tento filter nie sú na sklade žiadne zabalené sáčky.")
         else:
-            st.dataframe(df_pc_view.style.map(zafarbi_zaporne, subset=["Stav (ks)", "Váha (kg)"]).format({"Váha (kg)": "{:.2f}"}),
-                         use_container_width=True, hide_index=True)
+            # Prehľad káva × gramáž
+            piv_pc = df_f.pivot_table(index="Káva", columns="Gramáž", values="Stav (ks)", aggfunc="sum", fill_value=0)
+            for g_ in gramaze_list:
+                if g_ not in piv_pc.columns: piv_pc[g_] = 0
+            piv_pc = piv_pc[[g_ for g_ in gramaze_list if (not f_gram or g_ in f_gram)]]
+            piv_pc["Spolu (ks)"] = piv_pc.sum(axis=1)
+            piv_pc["Spolu (kg)"] = sum(piv_pc[g_] * g_ for g_ in piv_pc.columns if isinstance(g_, int)) / 1000.0
+            piv_pc = piv_pc.rename(columns={g_: f"{g_} g" for g_ in gramaze_list})
+            if not aj_nulove: piv_pc = piv_pc[piv_pc["Spolu (ks)"] != 0]
+            st.markdown("##### Prehľad: káva × gramáž (ks)")
+            st.dataframe(piv_pc.style.map(zafarbi_zaporne).map(lambda v: "color:#BBBBBB;" if v == 0 else "", subset=[c for c in piv_pc.columns if c.endswith(" g")])
+                         .format({"Spolu (kg)": "{:.2f}"}),
+                         use_container_width=True)
+            with st.expander("Detail po kartách (SKU)"):
+                st.dataframe(df_f.sort_values(["Káva", "Gramáž"]).style.map(zafarbi_zaporne, subset=["Stav (ks)", "Váha (kg)"]).format({"Váha (kg)": "{:.2f}"}),
+                             use_container_width=True, hide_index=True)
+            st.caption("Tip: kliknutím na hlavičku stĺpca tabuľku zoradíš.")
         inventura_editor("zabalena", "ks", "Zabalená PC", odomknute)
 
     # ---------- OBALY A SAMOLEPKY ----------
