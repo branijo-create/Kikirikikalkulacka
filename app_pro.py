@@ -500,6 +500,188 @@ def nacitaj_exporty_pre_evicku():
     except Exception:
         return []
 
+
+# ==========================================
+# 🛒 E-SHOP (WooCommerce, kikiriki.sk)
+# ==========================================
+NAZOV_LISTU_ESHOP = "Eshop_import"          # pamäť už importovaných objednávok (proti zdvojeniu)
+ESHOP_HLAVICKA = ["Číslo obj.", "Importované", "Zákazník", "Položky"]
+ESHOP_STAVY = ["processing"]                 # ktoré stavy objednávok sťahovať (zaplatené, čakajú na spracovanie)
+
+# ID produktu v e-shope -> názov kávy v appke (podľa MENU_KAVY). None = appka sa opýta, kam to zaradiť.
+ESHOP_MAPOVANIE = {
+    20644: "Cucflek",          # Cucflek
+    20631: "K52%",             # Kopaničiarska 52%
+    19888: "Brazília",         # Brazília – Na každý deň
+    19369: "Etiopia BG",       # Etiópia – Banko Gotiti
+    18680: "Columbia",         # Kolumbia – Huila Condor
+    18674: "India",            # India Plantation AA
+    5481:  "Honduras",         # Honduras – SHG EP San Andrés
+    5495:  "Etiopia Yerg.",    # Etiópia – Yirgacheffe
+    10866: "Frištuk",          # Fristuk
+    12032: "Aranka",           # Aranka
+    11879: None,               # Brazília – Donas do Café  -> nie je v menu appky, vyber ručne
+}
+
+def eshop_nastaveny():
+    return all(st.secrets.get(k, "") for k in ("woo_url", "woo_ck", "woo_cs"))
+
+def eshop_gramaz_z_textu(text):
+    """'Balenie 500 g' / '1kg' / 'Aranka - 220g' -> 500 / 1000 / 220. Neznáme -> 0."""
+    import re
+    m = re.search(r"(\d+[.,]?\d*)[\s-]*(kg|g)\b", str(text).lower())
+    if not m:
+        return 0
+    cislo = float(m.group(1).replace(",", "."))
+    gram = int(round(cislo * 1000)) if m.group(2) == "kg" else int(round(cislo))
+    return gram if gram in gramaze_list else 0
+
+def eshop_stiahni_objednavky():
+    """Vráti zoznam objednávok z WooCommerce REST API (iba stavy v ESHOP_STAVY)."""
+    import requests
+    url = st.secrets["woo_url"].rstrip("/") + "/wp-json/wc/v3/orders"
+    auth = (st.secrets["woo_ck"], st.secrets["woo_cs"])
+    vsetky = []
+    for stav in ESHOP_STAVY:
+        strana = 1
+        while True:
+            r = requests.get(url, auth=auth, timeout=20,
+                             params={"status": stav, "per_page": 50, "page": strana, "orderby": "date", "order": "asc"})
+            r.raise_for_status()
+            davka = r.json()
+            vsetky.extend(davka)
+            if len(davka) < 50:
+                break
+            strana += 1
+    return vsetky
+
+def eshop_riadky_z_objednavky(obj):
+    """Jedna objednávka z e-shopu -> riadky pre Knihu objednávok (Odberateľ/Káva/Gramáž/Kusy)."""
+    b = obj.get("billing", {}) or {}
+    meno = (b.get("company") or f"{b.get('first_name', '')} {b.get('last_name', '')}").strip() or f"E-shop #{obj.get('id')}"
+    riadky = []
+    for pol in obj.get("line_items", []):
+        pid = int(pol.get("product_id") or 0)
+        kava = ESHOP_MAPOVANIE.get(pid, None)
+        gramaz = 0
+        for meta in pol.get("meta_data", []) or []:
+            if "balenie" in str(meta.get("key", "")).lower():
+                gramaz = eshop_gramaz_z_textu(meta.get("value", ""))
+                break
+        if not gramaz:
+            gramaz = eshop_gramaz_z_textu(pol.get("name", ""))
+        riadky.append({
+            "Číslo obj.": str(obj.get("number") or obj.get("id")),
+            "Odberateľ": meno,
+            "Produkt (e-shop)": pol.get("name", ""),
+            "Káva": kava or "",
+            "Gramáž": gramaz,
+            "Kusy": int(pol.get("quantity") or 0),
+        })
+    return riadky
+
+def eshop_nacitaj_importovane():
+    try:
+        spreadsheet = otvor_tabulku(get_client())
+        ws = spreadsheet.worksheet(NAZOV_LISTU_ESHOP)
+        return {r[0] for r in ws.get_all_values()[1:] if r and r[0]}
+    except Exception:
+        return set()
+
+def eshop_zapis_importovane(zaznamy):
+    """zaznamy: list [cislo_obj, cas, zakaznik, polozky]"""
+    import gspread
+    spreadsheet = otvor_tabulku(get_client())
+    try:
+        ws = spreadsheet.worksheet(NAZOV_LISTU_ESHOP)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = spreadsheet.add_worksheet(title=NAZOV_LISTU_ESHOP, rows=1000, cols=len(ESHOP_HLAVICKA))
+        ws.append_row(ESHOP_HLAVICKA, value_input_option="RAW")
+    ws.append_rows(zaznamy, value_input_option="RAW")
+
+def eshop_blok_ui():
+    st.markdown("### 🛒 Objednávky z e-shopu (kikiriki.sk)")
+    if not eshop_nastaveny():
+        st.info("E-shop nie je pripojený – v Streamlit Secrets chýbajú `woo_url`, `woo_ck`, `woo_cs`.")
+        return
+
+    c1, c2 = st.columns([2, 3])
+    with c1:
+        if st.button("🛒 Načítať nové objednávky z e-shopu", use_container_width=True):
+            try:
+                with st.spinner("Sťahujem objednávky…"):
+                    importovane = eshop_nacitaj_importovane()
+                    objednavky = [o for o in eshop_stiahni_objednavky()
+                                  if str(o.get("number") or o.get("id")) not in importovane]
+                    riadky = [r for o in objednavky for r in eshop_riadky_z_objednavky(o)]
+                st.session_state["eshop_nahlad"] = riadky
+                st.session_state["eshop_preskocene"] = len(importovane)
+            except Exception as e:
+                st.error(f"Nepodarilo sa stiahnuť objednávky: {e}")
+    with c2:
+        st.caption(f"Sťahujú sa objednávky v stave: {', '.join(ESHOP_STAVY)}. Už importované sa preskakujú "
+                   f"(pamäť v hárku „{NAZOV_LISTU_ESHOP}“).")
+
+    nahlad = st.session_state.get("eshop_nahlad")
+    if nahlad is None:
+        return
+    if not nahlad:
+        st.success("Žiadne nové objednávky – všetko je už v knihe.")
+        return
+
+    st.write(f"**Nové riadky: {len(nahlad)}** (objednávok: {len({r['Číslo obj.'] for r in nahlad})}). "
+             "Skontroluj mapovanie a potom pridaj do knihy.")
+    moznosti = [""] + list(MENU_KAVY.keys())
+    df_n = pd.DataFrame(nahlad)
+    df_n["Gramáž"] = df_n["Gramáž"].astype(int)
+    upraveny = st.data_editor(
+        df_n,
+        key="eshop_editor",
+        use_container_width=True,
+        hide_index=True,
+        disabled=["Číslo obj.", "Produkt (e-shop)"],
+        column_config={
+            "Káva": st.column_config.SelectboxColumn("Káva", options=moznosti, required=False),
+            "Gramáž": st.column_config.SelectboxColumn("Gramáž", options=[0] + gramaze_list),
+            "Kusy": st.column_config.NumberColumn("Kusy", min_value=0, step=1),
+        },
+    )
+    chybne = upraveny[(upraveny["Káva"] == "") | (upraveny["Gramáž"] == 0) | (upraveny["Kusy"] <= 0)]
+    if not chybne.empty:
+        st.warning(f"{len(chybne)} riadkov nemá priradenú kávu/gramáž – doplň ich v tabuľke (alebo daj Kusy 0, ak sa majú vynechať).")
+
+    cb1, cb2 = st.columns(2)
+    with cb1:
+        if st.button("➕ Pridať do knihy objednávok", type="primary", use_container_width=True,
+                     disabled=not chybne[chybne["Kusy"] > 0].empty):
+            pocet_pred = len(st.session_state.aktualne_objednavky)
+            platne = upraveny[upraveny["Kusy"] > 0]
+            for _, r in platne.iterrows():
+                st.session_state.aktualne_objednavky.append({
+                    "Odberateľ": str(r["Odberateľ"]), "Káva": str(r["Káva"]), "Gramáž": int(r["Gramáž"]),
+                    "Kusy": int(r["Kusy"]), "Zabalené (ks)": 0, "Potvrdene": False, "Sudy": False, "❌ Zmazať": False,
+                })
+            nove = st.session_state.aktualne_objednavky[pocet_pred:]
+            cas = datetime.now().strftime("%d.%m.%Y %H:%M")
+            zaznamy = []
+            for cislo, sk in upraveny.groupby("Číslo obj."):
+                zaznamy.append([str(cislo), cas, str(sk["Odberateľ"].iloc[0]),
+                                "; ".join(f"{a['Káva']} {a['Gramáž']}g x{a['Kusy']}" for _, a in sk.iterrows() if a["Kusy"] > 0)])
+            try:
+                eshop_zapis_importovane(zaznamy)
+            except Exception as e:
+                st.toast(f"⚠️ Objednávky pridané, ale pamäť importu sa nezapísala: {e}", icon="⚠️")
+            auto_uloz(akcia="Import z e-shopu", detail=f"{len(nove)} riadkov, obj. {', '.join(z[0] for z in zaznamy)}: " + "; ".join(popis_obj(o) for o in nove))
+            st.session_state.pop("eshop_nahlad", None)
+            st.session_state.pop("eshop_editor", None)
+            st.success(f"Pridaných {len(nove)} riadkov z {len(zaznamy)} objednávok.")
+            st.rerun()
+    with cb2:
+        if st.button("Zahodiť náhľad", use_container_width=True):
+            st.session_state.pop("eshop_nahlad", None)
+            st.rerun()
+
+
 def nacitaj_historiu():
     import gspread
     spreadsheet = otvor_tabulku(get_client())
@@ -1204,6 +1386,9 @@ with tab1:
         except Exception as e:
             st.error("Chyba pri spracovaní Excelu.")
 
+    st.divider()
+
+    eshop_blok_ui()
     st.divider()
 
     st.markdown("### Manuálny príjem objednávok")
