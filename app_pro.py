@@ -523,6 +523,21 @@ ESHOP_MAPOVANIE = {
     11879: None,               # Brazília – Donas do Café  -> nie je v menu appky, vyber ručne
 }
 
+# Záchranné mapovanie podľa názvu (keď ID produktu nie je v ESHOP_MAPOVANIE – napr. nový/testovací produkt)
+ESHOP_MAPOVANIE_NAZOV = [
+    ("cucflek", "Cucflek"), ("52", "K52%"), ("kopani", "K52%"), ("aranka", "Aranka"), ("fri", "Frištuk"),
+    ("banko", "Etiopia BG"), ("gotiti", "Etiopia BG"), ("yirg", "Etiopia Yerg."), ("etiop", "Etiopia Yerg."),
+    ("kolumb", "Columbia"), ("columb", "Columbia"), ("india", "India"), ("honduras", "Honduras"),
+    ("peru", "Peru"), ("rwanda", "Rwanda"), ("indonez", "Indonezia"), ("brazil", "Brazília"),
+]
+
+def eshop_kava_podla_nazvu(nazov):
+    n = str(nazov).lower()
+    for kluc, kava in ESHOP_MAPOVANIE_NAZOV:
+        if kluc in n:
+            return kava
+    return ""
+
 def eshop_nastaveny():
     return all(st.secrets.get(k, "") for k in ("woo_url", "woo_ck", "woo_cs"))
 
@@ -563,6 +578,8 @@ def eshop_riadky_z_objednavky(obj):
     for pol in obj.get("line_items", []):
         pid = int(pol.get("product_id") or 0)
         kava = ESHOP_MAPOVANIE.get(pid, None)
+        if not kava:
+            kava = eshop_kava_podla_nazvu(pol.get("name", ""))
         gramaz = 0
         for meta in pol.get("meta_data", []) or []:
             if "balenie" in str(meta.get("key", "")).lower():
@@ -574,6 +591,7 @@ def eshop_riadky_z_objednavky(obj):
             "Číslo obj.": str(obj.get("number") or obj.get("id")),
             "Odberateľ": meno,
             "Produkt (e-shop)": pol.get("name", ""),
+            "ID produktu": f"{pid}/{pol.get('variation_id') or 0}",
             "Káva": kava or "",
             "Gramáž": gramaz,
             "Kusy": int(pol.get("quantity") or 0),
@@ -639,7 +657,7 @@ def eshop_blok_ui():
         key="eshop_editor",
         use_container_width=True,
         hide_index=True,
-        disabled=["Číslo obj.", "Produkt (e-shop)"],
+        disabled=["Číslo obj.", "Produkt (e-shop)", "ID produktu"],
         column_config={
             "Káva": st.column_config.SelectboxColumn("Káva", options=moznosti, required=False),
             "Gramáž": st.column_config.SelectboxColumn("Gramáž", options=[0] + gramaze_list),
