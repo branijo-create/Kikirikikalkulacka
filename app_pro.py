@@ -520,7 +520,7 @@ ESHOP_MAPOVANIE = {
     5495:  "Etiopia Yerg.",    # Etiópia – Yirgacheffe
     10866: "Frištuk",          # Fristuk
     12032: "Aranka",           # Aranka
-    11879: None,               # Brazília – Donas do Café  -> nie je v menu appky, vyber ručne
+    11879: "Brazília",         # Brazília – Donas do Café
 }
 
 # Záchranné mapovanie podľa názvu (keď ID produktu nie je v ESHOP_MAPOVANIE – napr. nový/testovací produkt)
